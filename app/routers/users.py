@@ -36,13 +36,12 @@ def register_user_endpoint(user: schemas.RegisterUserPayload, db: Session = Depe
     return created_user
 
 # Neuer Endpunkt für Benutzer-Login
-@router.post("/login") # response_model kann hier ein Token-Schema sein, falls Tokens implementiert werden
-def login_user_endpoint(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: Session = Depends(get_db)):
-    infoLog(MODULE_NAME, f"Attempting to log in user: {form_data.username}")
-    # OAuth2PasswordRequestForm verwendet 'username' für das erste Feld (kann Email oder Username sein)
-    user = crud.authenticate_user(db, username_or_email=form_data.username, password=form_data.password)
+@router.post("/login", response_model=schemas.User) # response_model kann hier ein Token-Schema sein, falls Tokens implementiert werden
+def login_user_endpoint(credentials: schemas.LoginPayload, db: Session = Depends(get_db)):
+    infoLog(MODULE_NAME, f"Attempting to log in user: {credentials.username_or_email}")
+    user = crud.authenticate_user(db, username_or_email=credentials.username_or_email, password=credentials.password)
     if not user:
-        errorLog(MODULE_NAME, f"Login failed: Invalid credentials for {form_data.username}")
+        errorLog(MODULE_NAME, f"Login failed: Invalid credentials for {credentials.username_or_email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
