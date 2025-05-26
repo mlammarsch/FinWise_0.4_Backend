@@ -1,0 +1,6 @@
+.env
+env
+venv
+/tenant_databases
+users.db
+backend.log

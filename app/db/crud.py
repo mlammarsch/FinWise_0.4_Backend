@@ -1,0 +1,123 @@
+from sqlalchemy.orm import Session
+from ..models import user_tenant_models as models
+from ..models import schemas
+import uuid # For generating UUIDs if not handled by DB default
+import os
+import sqlite3
+from ..config import TENANT_DATABASE_DIR
+from ..utils.logger import infoLog, errorLog, debugLog, warnLog # Importiere den neuen Logger
+
+from passlib.context import CryptContext
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Definiere den Modulnamen für das Logging
+MODULE_NAME = "db.crud"
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+# User CRUD operations
+def get_user(db: Session, user_id: str) -> models.User | None:
+    return db.query(models.User).filter(models.User.uuid == user_id).first()
+
+def get_user_by_email(db: Session, email: str) -> models.User | None:
+    return db.query(models.User).filter(models.User.email == email).first()
+
+def get_users(db: Session, skip: int = 0, limit: int = 100) -> list[models.User]:
+    return db.query(models.User).offset(skip).limit(limit).all()
+
+def create_user(db: Session, user: schemas.UserCreate) -> models.User:
+    debugLog(MODULE_NAME, f"Attempting to create user with email: {user.email}", {"username": user.name, "email": user.email})
+    hashed_password = get_password_hash(user.password)
+    db_user = models.User(
+        name=user.name,
+        email=user.email,
+        hashed_password=hashed_password
+        # createdAt und updatedAt werden automatisch durch SQLAlchemy gesetzt
+    )
+    try:
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        infoLog(MODULE_NAME, f"User created successfully with ID: {db_user.uuid}", {"user_id": db_user.uuid, "email": db_user.email})
+        return db_user
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Error creating user with email: {user.email}", {"username": user.name, "email": user.email, "error": str(e)})
+        db.rollback() # Wichtig: Rollback bei Fehler
+        raise # Fehler weiterwerfen, damit der Aufrufer ihn behandeln kann
+
+# Tenant CRUD operations
+def get_tenant(db: Session, tenant_id: str) -> models.Tenant | None:
+    return db.query(models.Tenant).filter(models.Tenant.uuid == tenant_id).first()
+
+def get_tenant_by_name_and_user_id(db: Session, name: str, user_id: str) -> models.Tenant | None:
+    return db.query(models.Tenant).filter(models.Tenant.name == name, models.Tenant.user_id == user_id).first()
+
+def get_tenants_by_user(db: Session, user_id: str, skip: int = 0, limit: int = 100) -> list[models.Tenant]:
+    return db.query(models.Tenant).filter(models.Tenant.user_id == user_id).offset(skip).limit(limit).all()
+
+def get_tenants(db: Session, skip: int = 0, limit: int = 100) -> list[models.Tenant]:
+    return db.query(models.Tenant).offset(skip).limit(limit).all()
+
+def create_tenant(db: Session, tenant: schemas.TenantCreate) -> models.Tenant:
+    debugLog(MODULE_NAME, f"Attempting to create tenant '{tenant.name}' for user ID: {tenant.user_id}", {"tenant_name": tenant.name, "user_id": tenant.user_id})
+    db_tenant = models.Tenant(
+        name=tenant.name,
+        user_id=tenant.user_id
+    )
+    try:
+        db.add(db_tenant)
+        db.commit()
+        db.refresh(db_tenant)
+        infoLog(MODULE_NAME, f"Tenant '{db_tenant.name}' (ID: {db_tenant.uuid}) created in main DB for user ID: {db_tenant.user_id}.", {"tenant_id": db_tenant.uuid, "tenant_name": db_tenant.name, "user_id": db_tenant.user_id})
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Error creating tenant '{tenant.name}' in main DB for user ID: {tenant.user_id}", {"error": str(e)})
+        db.rollback()
+        raise
+
+    try:
+        if not os.path.exists(TENANT_DATABASE_DIR):
+            os.makedirs(TENANT_DATABASE_DIR)
+            infoLog(MODULE_NAME, f"Created tenant database directory: {TENANT_DATABASE_DIR}")
+
+        tenant_db_filename = f"finwiseTenantDB_{db_tenant.uuid}.db"
+        tenant_db_path = os.path.join(TENANT_DATABASE_DIR, tenant_db_filename)
+
+        if not os.path.exists(tenant_db_path):
+            conn = sqlite3.connect(tenant_db_path)
+            conn.close()
+            infoLog(MODULE_NAME, f"Created tenant-specific database file: {tenant_db_path}", {"tenant_id": db_tenant.uuid})
+        else:
+            warnLog(MODULE_NAME, f"Tenant-specific database file already exists (no action taken): {tenant_db_path}", {"tenant_id": db_tenant.uuid})
+
+        return db_tenant # Tenant-Objekt erst nach erfolgreicher DB-Erstellung zurückgeben
+
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Failed to create tenant-specific database file for tenant {db_tenant.uuid}: {str(e)}", {"tenant_id": db_tenant.uuid})
+        # WICHTIG: Da der Tenant bereits in der Haupt-DB commited wurde, hier aber die Datei-Erstellung fehlschlägt,
+        # wäre ein Rollback des Haupt-DB-Eintrags ideal, aber komplexer (erfordert z.B. SAGA-Pattern oder Zwei-Phasen-Commit-Logik).
+        # Für den Moment: Fehler loggen und Exception weiterwerfen. Der Aufrufer (Router) muss entscheiden, wie er damit umgeht.
+        # Der Router könnte dann versuchen, den Tenant aus der Haupt-DB zu löschen.
+        raise # Fehler weiterwerfen, damit der Router ihn behandeln kann (z.B. HTTP 500)
+
+def delete_tenant(db: Session, tenant_id: str) -> models.Tenant | None:
+    debugLog(MODULE_NAME, f"Attempting to delete tenant with ID: {tenant_id}", {"tenant_id": tenant_id})
+    db_tenant = db.query(models.Tenant).filter(models.Tenant.uuid == tenant_id).first()
+    if db_tenant:
+        try:
+            db.delete(db_tenant)
+            db.commit()
+            infoLog(MODULE_NAME, f"Tenant with ID: {tenant_id} deleted from main DB.", {"tenant_id": tenant_id})
+            # Das Löschen der physischen DB-Datei ist hier nicht implementiert,
+            # könnte aber als nächster Schritt im Router oder hier erfolgen.
+            return db_tenant # Rückgabe des gelöschten Objekts (vor dem Commit war es noch in der Session)
+        except Exception as e:
+            errorLog(MODULE_NAME, f"Error deleting tenant with ID: {tenant_id} from main DB.", {"tenant_id": tenant_id, "error": str(e)})
+            db.rollback()
+            raise
+    else:
+        warnLog(MODULE_NAME, f"Tenant with ID: {tenant_id} not found for deletion.", {"tenant_id": tenant_id})
+        return None
