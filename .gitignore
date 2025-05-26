@@ -4,3 +4,7 @@ venv
 /tenant_databases
 users.db
 backend.log
+debug.log
+*.tmp
+cache/
+*.pyc
