@@ -173,7 +173,10 @@ def get_tenants(db: Session, skip: int = 0, limit: int = 100) -> list[models.Ten
 
 def create_tenant(db: Session, tenant: schemas.TenantCreate) -> models.Tenant:
     debugLog(MODULE_NAME, f"Attempting to create tenant '{tenant.name}' for user ID: {tenant.user_id}", {"tenant_name": tenant.name, "user_id": tenant.user_id})
+    # Verwende die vom Frontend gesendete UUID, falls vorhanden, sonst lass die DB eine generieren.
+    # Da wir im Frontend immer eine UUID generieren, sollte tenant.uuid hier immer gesetzt sein.
     db_tenant = models.Tenant(
+        uuid=tenant.uuid, # Verwende die übergebene UUID
         name=tenant.name,
         user_id=tenant.user_id
     )

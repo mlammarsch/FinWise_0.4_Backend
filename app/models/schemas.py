@@ -36,6 +36,7 @@ class TenantBase(BaseModel):
 
 class TenantCreate(TenantBase):
     user_id: str
+    uuid: str | None = None # Füge optionales UUID-Feld hinzu
 
 class Tenant(TenantBase):
     uuid: str
