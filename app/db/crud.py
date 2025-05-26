@@ -82,15 +82,18 @@ def create_user_with_password(db: Session, user: schemas.RegisterUserPayload) ->
         raise # Fehler weiterwerfen, damit der Aufrufer ihn behandeln kann
 
 def create_user(db: Session, user: schemas.UserSyncPayload) -> models.User:
-    """Create or update a user from frontend sync data (without password)."""
-    debugLog(MODULE_NAME, f"Attempting to create/update user from sync with UUID: {user.uuid}", {"user_id": user.uuid, "email": user.email})
+    """Create or update a user from frontend sync data (now with optional password hash)."""
+    debugLog(MODULE_NAME, f"Attempting to create/update user from sync with UUID: {user.uuid}", {"user_id": user.uuid, "email": user.email, "has_hash": user.hashed_password is not None})
     db_user = db.query(models.User).filter(models.User.uuid == user.uuid).first()
 
     if db_user:
-        # User exists, update data (except password)
+        # User exists, update data
         debugLog(MODULE_NAME, f"User with UUID {user.uuid} found during sync, updating.", {"user_id": user.uuid})
         db_user.name = user.name
         db_user.email = user.email
+        if user.hashed_password is not None:
+            db_user.hashed_password = user.hashed_password
+            debugLog(MODULE_NAME, f"User with UUID {user.uuid} - password hash updated from sync.", {"user_id": user.uuid})
         # updatedAt wird automatisch durch SQLAlchemy onupdate gesetzt
         infoLog(MODULE_NAME, f"User with UUID {user.uuid} updated from sync.", {"user_id": user.uuid})
     else:
@@ -100,11 +103,11 @@ def create_user(db: Session, user: schemas.UserSyncPayload) -> models.User:
             uuid=user.uuid, # Use UUID from frontend
             name=user.name,
             email=user.email,
-            # hashed_password bleibt None für sync-created users
+            hashed_password=user.hashed_password # Set password hash if provided
             # createdAt und updatedAt werden automatisch gesetzt
         )
         db.add(db_user)
-        infoLog(MODULE_NAME, f"New user with UUID {user.uuid} created from sync.", {"user_id": user.uuid})
+        infoLog(MODULE_NAME, f"New user with UUID {user.uuid} created from sync.", {"user_id": user.uuid, "hash_provided": user.hashed_password is not None})
 
     try:
         db.commit()

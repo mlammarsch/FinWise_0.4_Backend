@@ -25,9 +25,10 @@ class User(UserBase):
     class Config:
         orm_mode = True
 
-# Schema für Benutzerdaten, die vom Frontend während des Syncs gesendet werden (enthält UUID, KEIN Passwort)
+# Schema für Benutzerdaten, die vom Frontend während des Syncs gesendet werden (enthält UUID, optional Passworthash)
 class UserSyncPayload(UserBase):
     uuid: str
+    hashed_password: str | None = None # Hinzugefügt für den Sync des Passwort-Hashes
 
 # Tenant Schemas
 class TenantBase(BaseModel):

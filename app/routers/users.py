@@ -56,10 +56,10 @@ def login_user_endpoint(credentials: schemas.LoginPayload, db: Session = Depends
 @router.post("/users", response_model=schemas.User)
 def sync_create_user_endpoint(user_data: schemas.UserSyncPayload, db: Session = Depends(get_db)):
     """
-    Endpoint for frontend to sync user data (create or update) without password.
+    Endpoint for frontend to sync user data (create or update), now with optional password hash.
     Uses UUID from frontend.
     """
-    infoLog(MODULE_NAME, f"Attempting to sync/create user from frontend with UUID: {user_data.uuid}")
+    infoLog(MODULE_NAME, f"Attempting to sync/create user from frontend with UUID: {user_data.uuid}, hash provided: {user_data.hashed_password is not None}")
     # Die Logik zum Erstellen oder Aktualisieren basierend auf UUID ist bereits in crud.create_user implementiert
     synced_user = crud.create_user(db=db, user=user_data)
     infoLog(MODULE_NAME, f"User sync/create successful for UUID: {synced_user.uuid}", {"user_id": synced_user.uuid})
