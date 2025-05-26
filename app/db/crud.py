@@ -20,34 +20,140 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 # User CRUD operations
+
 def get_user(db: Session, user_id: str) -> models.User | None:
-    return db.query(models.User).filter(models.User.uuid == user_id).first()
+    """Retrieve a user by their UUID."""
+    debugLog(MODULE_NAME, f"Attempting to get user with ID: {user_id}", {"user_id": user_id})
+    user = db.query(models.User).filter(models.User.uuid == user_id).first()
+    if user:
+        debugLog(MODULE_NAME, f"User found with ID: {user_id}", {"user_id": user_id})
+    else:
+        debugLog(MODULE_NAME, f"User not found with ID: {user_id}", {"user_id": user_id})
+    return user
 
 def get_user_by_email(db: Session, email: str) -> models.User | None:
-    return db.query(models.User).filter(models.User.email == email).first()
+    """Retrieve a user by their email address."""
+    debugLog(MODULE_NAME, f"Attempting to get user with email: {email}", {"email": email})
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if user:
+        debugLog(MODULE_NAME, f"User found with email: {email}", {"email": email, "user_id": user.uuid})
+    else:
+        debugLog(MODULE_NAME, f"User not found with email: {email}", {"email": email})
+    return user
+
+def get_user_by_username(db: Session, username: str) -> models.User | None:
+    """Retrieve a user by their username (name field)."""
+    debugLog(MODULE_NAME, f"Attempting to get user with username: {username}", {"username": username})
+    user = db.query(models.User).filter(models.User.name == username).first()
+    if user:
+        debugLog(MODULE_NAME, f"User found with username: {username}", {"username": username, "user_id": user.uuid})
+    else:
+        debugLog(MODULE_NAME, f"User not found with username: {username}", {"username": username})
+    return user
+
 
 def get_users(db: Session, skip: int = 0, limit: int = 100) -> list[models.User]:
-    return db.query(models.User).offset(skip).limit(limit).all()
+    """Retrieve a list of users."""
+    debugLog(MODULE_NAME, "Attempting to get list of users", {"skip": skip, "limit": limit})
+    users = db.query(models.User).offset(skip).limit(limit).all()
+    debugLog(MODULE_NAME, f"Retrieved {len(users)} users", {"count": len(users)})
+    return users
 
-def create_user(db: Session, user: schemas.UserCreate) -> models.User:
-    debugLog(MODULE_NAME, f"Attempting to create user with email: {user.email}", {"username": user.name, "email": user.email})
+def create_user_with_password(db: Session, user: schemas.RegisterUserPayload) -> models.User:
+    """Create a new user with a hashed password (for registration endpoint)."""
+    debugLog(MODULE_NAME, f"Attempting to create user with email: {user.email} (with password)", {"username": user.name, "email": user.email})
     hashed_password = get_password_hash(user.password)
     db_user = models.User(
         name=user.name,
         email=user.email,
         hashed_password=hashed_password
         # createdAt und updatedAt werden automatisch durch SQLAlchemy gesetzt
+        # UUID wird automatisch durch SQLAlchemy default gesetzt
     )
     try:
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
-        infoLog(MODULE_NAME, f"User created successfully with ID: {db_user.uuid}", {"user_id": db_user.uuid, "email": db_user.email})
+        infoLog(MODULE_NAME, f"User created successfully with ID: {db_user.uuid} (with password)", {"user_id": db_user.uuid, "email": db_user.email})
         return db_user
     except Exception as e:
-        errorLog(MODULE_NAME, f"Error creating user with email: {user.email}", {"username": user.name, "email": user.email, "error": str(e)})
+        errorLog(MODULE_NAME, f"Error creating user with email: {user.email} (with password)", {"username": user.name, "email": user.email, "error": str(e)})
         db.rollback() # Wichtig: Rollback bei Fehler
         raise # Fehler weiterwerfen, damit der Aufrufer ihn behandeln kann
+
+def create_user(db: Session, user: schemas.UserSyncPayload) -> models.User:
+    """Create or update a user from frontend sync data (without password)."""
+    debugLog(MODULE_NAME, f"Attempting to create/update user from sync with UUID: {user.uuid}", {"user_id": user.uuid, "email": user.email})
+    db_user = db.query(models.User).filter(models.User.uuid == user.uuid).first()
+
+    if db_user:
+        # User exists, update data (except password)
+        debugLog(MODULE_NAME, f"User with UUID {user.uuid} found during sync, updating.", {"user_id": user.uuid})
+        db_user.name = user.name
+        db_user.email = user.email
+        # updatedAt wird automatisch durch SQLAlchemy onupdate gesetzt
+        infoLog(MODULE_NAME, f"User with UUID {user.uuid} updated from sync.", {"user_id": user.uuid})
+    else:
+        # User does not exist, create new one with provided UUID
+        debugLog(MODULE_NAME, f"User with UUID {user.uuid} not found during sync, creating new.", {"user_id": user.uuid})
+        db_user = models.User(
+            uuid=user.uuid, # Use UUID from frontend
+            name=user.name,
+            email=user.email,
+            # hashed_password bleibt None für sync-created users
+            # createdAt und updatedAt werden automatisch gesetzt
+        )
+        db.add(db_user)
+        infoLog(MODULE_NAME, f"New user with UUID {user.uuid} created from sync.", {"user_id": user.uuid})
+
+    try:
+        db.commit()
+        db.refresh(db_user)
+        infoLog(MODULE_NAME, f"User sync operation successful for UUID: {db_user.uuid}", {"user_id": db_user.uuid})
+        return db_user
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Error during user sync operation for UUID: {user.uuid}", {"user_id": user.uuid, "error": str(e)})
+        db.rollback()
+        raise
+
+def update_user(db: Session, user_id: str, user_data: schemas.UserBase) -> models.User | None:
+    """Update user data (name, email) for an existing user."""
+    debugLog(MODULE_NAME, f"Attempting to update user with ID: {user_id}", {"user_id": user_id, "user_data": user_data.model_dump_json()})
+    db_user = db.query(models.User).filter(models.User.uuid == user_id).first()
+    if db_user:
+        try:
+            db_user.name = user_data.name
+            db_user.email = user_data.email
+            # updatedAt wird automatisch durch SQLAlchemy onupdate gesetzt
+            db.commit()
+            db.refresh(db_user)
+            infoLog(MODULE_NAME, f"User with ID: {user_id} updated successfully.", {"user_id": user_id})
+            return db_user
+        except Exception as e:
+            errorLog(MODULE_NAME, f"Error updating user with ID: {user_id}", {"user_id": user_id, "error": str(e)})
+            db.rollback()
+            raise
+    else:
+        warnLog(MODULE_NAME, f"User with ID: {user_id} not found for update.", {"user_id": user_id})
+        return None
+
+def authenticate_user(db: Session, username_or_email: str, password: str) -> models.User | None:
+    """Authenticate a user by username or email and password."""
+    debugLog(MODULE_NAME, f"Attempting to authenticate user: {username_or_email}")
+    user = get_user_by_email(db, email=username_or_email)
+    if not user:
+        user = get_user_by_username(db, username=username_or_email)
+
+    if not user or not user.hashed_password:
+        warnLog(MODULE_NAME, f"Authentication failed: User not found or no password set for {username_or_email}")
+        return None
+
+    if not verify_password(password, user.hashed_password):
+        warnLog(MODULE_NAME, f"Authentication failed: Incorrect password for user {user.uuid}", {"user_id": user.uuid})
+        return None
+
+    infoLog(MODULE_NAME, f"Authentication successful for user {user.uuid}", {"user_id": user.uuid})
+    return user
 
 # Tenant CRUD operations
 def get_tenant(db: Session, tenant_id: str) -> models.Tenant | None:

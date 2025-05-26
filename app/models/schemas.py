@@ -7,9 +7,16 @@ class UserBase(BaseModel):
     name: str
     email: EmailStr
 
-class UserCreate(UserBase):
-    password: str # TODO: Implement password hashing
+# Schema für die Online-Registrierung (enthält Passwort)
+class RegisterUserPayload(UserBase):
+    password: str
 
+# Schema für den Online-Login
+class LoginPayload(BaseModel):
+    username_or_email: str
+    password: str
+
+# Schema für die API-Antworten (enthält KEIN Passwort)
 class User(UserBase):
     uuid: str
     createdAt: datetime
@@ -17,6 +24,10 @@ class User(UserBase):
 
     class Config:
         orm_mode = True
+
+# Schema für Benutzerdaten, die vom Frontend während des Syncs gesendet werden (enthält UUID, KEIN Passwort)
+class UserSyncPayload(UserBase):
+    uuid: str
 
 # Tenant Schemas
 class TenantBase(BaseModel):
