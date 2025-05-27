@@ -3,10 +3,10 @@ from typing import Any, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session
+from sqlalchemy.orm import Session # Geändert von sqlmodel zu sqlalchemy für Kompatibilität mit TenantSessionLocal
 
 from app import crud
-from app.api import deps # Angenommen, deps enthält get_db und get_current_tenant
+from app.api.deps import get_tenant_db_session, get_current_tenant_id # Direkter Import der neuen Dependencies
 from app.models.account import Account, AccountCreate, AccountRead, AccountUpdate
 from app.models.account_group import (
     AccountGroup,
@@ -29,24 +29,16 @@ from app.models.sync import (
 router = APIRouter()
 
 
-def get_current_tenant_id_placeholder() -> UUID:
-    # PLATZHALTER: Diese Funktion sollte den aktuellen Mandanten aus dem Authentifizierungssystem holen.
-    # Ersetze dies durch deine tatsächliche Implementierung, z.B. mit deps.get_current_tenant().id
-    # Für Testzwecke wird eine feste UUID zurückgegeben.
-    # Stelle sicher, dass diese UUID in deiner Datenbank existiert, wenn du testest.
-    try:
-        return UUID("00000000-0000-0000-0000-000000000000") # Beispiel-UUID
-    except ValueError:
-        # Fallback, falls die UUID-Erstellung fehlschlägt (sollte nicht passieren)
-        raise HTTPException(status_code=500, detail="Invalid placeholder tenant ID format")
+# Die get_current_tenant_id_placeholder Funktion wird nicht mehr benötigt,
+# da wir get_current_tenant_id aus app.api.deps verwenden.
 
 
 @router.post("/push", response_model=SyncPushResponse)
 def push_changes(
     *,
-    db: Session = Depends(deps.get_db),
+    db: Session = Depends(get_tenant_db_session), # Ersetzt durch die neue mandantenspezifische Session
     sync_request: SyncPushRequest,
-    current_tenant_id: UUID = Depends(get_current_tenant_id_placeholder), # deps.get_current_tenant().id
+    current_tenant_id: str = Depends(get_current_tenant_id), # Verwendet die neue Dependency
 ) -> SyncPushResponse:
     """
     Nimmt eine Liste von Änderungen vom Frontend entgegen und verarbeitet sie.
@@ -102,7 +94,7 @@ def push_changes(
 
 
 def handle_account_sync(
-    db: Session, item: SyncQueueItemIn, tenant_id: UUID
+    db: Session, item: SyncQueueItemIn, tenant_id: str # tenant_id ist jetzt string
 ) -> Optional[AccountRead]:
     entity_id = item.entity_id
     payload = item.payload
@@ -218,7 +210,7 @@ def handle_account_sync(
 
 
 def handle_account_group_sync(
-    db: Session, item: SyncQueueItemIn, tenant_id: UUID
+    db: Session, item: SyncQueueItemIn, tenant_id: str # tenant_id ist jetzt string
 ) -> Optional[AccountGroupRead]:
     entity_id = item.entity_id
     payload = item.payload
@@ -306,10 +298,10 @@ def handle_account_group_sync(
 @router.get("/pull/{entity_type}", response_model=SyncPullResponse)
 def pull_changes(
     *,
-    db: Session = Depends(deps.get_db),
+    db: Session = Depends(get_tenant_db_session), # Ersetzt durch die neue mandantenspezifische Session
     entity_type: SyncEntityType,
     last_sync_timestamp_str: Optional[str] = Query(None, alias="lastSyncTimestamp", description="ISO 8601 Format"),
-    current_tenant_id: UUID = Depends(get_current_tenant_id_placeholder),
+    current_tenant_id: str = Depends(get_current_tenant_id), # Verwendet die neue Dependency
 ) -> SyncPullResponse:
     """
     Gibt Änderungen für einen bestimmten Entitätstyp seit einem optionalen Zeitstempel zurück.
