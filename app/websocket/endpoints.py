@@ -1,9 +1,11 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.orm import Session
+import json # Import json for potential string conversion if needed, though Pydantic handles it
 
-from app.api import deps # Annahme: deps.py existiert und enthält get_db und get_current_active_user
+from app.api import deps
 from app.websocket.connection_manager import manager
 from app.models.user_tenant_models import User
+from app.websocket.schemas import BackendStatusMessage # Import Pydantic model
 
 router = APIRouter()
 
@@ -11,36 +13,49 @@ router = APIRouter()
 async def websocket_endpoint(
     websocket: WebSocket,
     tenant_id: str,
-    # current_user: User = Depends(deps.get_current_active_user), # Vorerst auskommentiert, um Komplexität zu reduzieren
+    # current_user: User = Depends(deps.get_current_active_user), # Vorerst auskommentiert
     # db: Session = Depends(deps.get_db) # Vorerst auskommentiert
 ):
-    # Hier könnte eine Überprüfung erfolgen, ob der current_user Zugriff auf den tenant_id hat.
-    # Fürs Erste wird dies vereinfacht.
     await manager.connect(websocket, tenant_id)
     try:
-        await manager.send_personal_message(f"Backend online for tenant {tenant_id}", websocket)
+        # Send initial online status message using the Pydantic model
+        online_status_message = BackendStatusMessage(status="online")
+        await manager.send_personal_json_message(online_status_message.model_dump(), websocket)
+
         while True:
             data = await websocket.receive_text()
-            # Hier könnte die empfangene Nachricht verarbeitet werden.
-            # Beispiel: await manager.broadcast_to_tenant(f"Client von Tenant {tenant_id} sagt: {data}", tenant_id)
-            # Für die Basisfunktionalität ist dies vorerst nicht notwendig.
-            # Stattdessen senden wir eine Bestätigung zurück.
+            # Process received message (currently just echoing)
+            # For now, we'll keep the echo simple.
+            # In a real scenario, you'd parse 'data' and react accordingly.
             await manager.send_personal_message(f"Nachricht empfangen: {data}", websocket)
     except WebSocketDisconnect:
         manager.disconnect(websocket, tenant_id)
-        # Optional: Benachrichtige andere Clients im selben Tenant über den Disconnect
+        # Optional: Notify other clients in the same tenant about the disconnect
         # await manager.broadcast_to_tenant(f"Ein Client von Tenant {tenant_id} hat die Verbindung getrennt.", tenant_id)
     except Exception as e:
-        # Loggen des Fehlers wäre hier sinnvoll
         print(f"Error in websocket connection for tenant {tenant_id}: {e}")
+        # Ensure disconnect on any other error
         manager.disconnect(websocket, tenant_id)
 
+
+# Function to allow other parts of the backend to broadcast a status change
+async def broadcast_backend_status(status: str):
+    """
+    Broadcasts the backend status (e.g., "online", "maintenance") to all connected clients.
+    This function can be called from other parts of the backend to signal a global status change.
+    """
+    # Uses the new method in ConnectionManager which handles Pydantic model creation
+    await manager.broadcast_backend_status_message(status)
+
+
 # Zukünftige Erweiterung für Datenänderungsbenachrichtigungen
+# This function remains for future use, potentially using Pydantic models as well.
 async def notify_data_change(tenant_id: str, entity_type: str, entity_id: str, action: str, data: dict):
     """
     Sendet eine Benachrichtigung über Datenänderungen an alle Clients eines Tenants.
     Beispiel: notify_data_change("tenant_xyz", "account", "acc_123", "updated", {"balance": 1500})
     """
+    # TODO: Consider creating a Pydantic model for this message type as well
     message = {
         "type": "data_update",
         "entity": entity_type,
@@ -48,15 +63,10 @@ async def notify_data_change(tenant_id: str, entity_type: str, entity_id: str, a
         "action": action, # "created", "updated", "deleted"
         "payload": data
     }
-    await manager.broadcast_to_tenant(str(message), tenant_id)
+    # For now, sending as a string. Could be upgraded to send_json with a Pydantic model.
+    await manager.broadcast_to_tenant(json.dumps(message), tenant_id)
 
-# Zukünftige Erweiterung für Online/Offline Status
-async def broadcast_backend_status(status: str): # "online" or "offline"
-    """
-    Sendet den Backend-Status an alle verbundenen Clients.
-    """
-    message = {
-        "type": "backend_status",
-        "status": status
-    }
-    await manager.broadcast_to_all(str(message))
+# The old broadcast_backend_status function (lines 54-62) is now effectively replaced
+# by the new broadcast_backend_status function (lines 39-45 in this diff)
+# and the logic moved into ConnectionManager.broadcast_backend_status_message.
+# We remove the old one to avoid confusion.
