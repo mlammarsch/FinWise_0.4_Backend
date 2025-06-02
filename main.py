@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.db.database import create_db_and_tables
 from app.routers import users, tenants
+from app.websocket import endpoints as websocket_endpoints # WebSocket-Router importieren
 from app.utils.logger import infoLog, errorLog
 
 MODULE_NAME = "main"
@@ -45,6 +46,7 @@ async def root():
 
 app.include_router(users.router)
 app.include_router(tenants.router)
+app.include_router(websocket_endpoints.router, prefix="/ws_finwise") # WebSocket-Router einbinden
 
 if __name__ == "__main__":
     import uvicorn
