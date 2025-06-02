@@ -20,9 +20,7 @@ def create_tenant_db_engine(tenant_uuid: str):
     db_url = get_tenant_db_url(tenant_uuid)
     return create_engine(db_url, connect_args={"check_same_thread": False})
 
-def create_tenant_db_session_local(tenant_uuid: str):
-    engine = create_tenant_db_engine(tenant_uuid)
-    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TenantSessionLocal = sessionmaker(autocommit=False, autoflush=False)
 
 def create_all_tenant_tables(engine):
     Base.metadata.create_all(bind=engine)

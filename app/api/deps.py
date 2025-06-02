@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.db.tenant_db import get_tenant_engine, TenantSessionLocal
+from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
 
 # TODO: Implement actual JWT token decoding and tenant_id extraction
 async def get_current_tenant_id() -> str:
