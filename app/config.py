@@ -1,8 +1,14 @@
 import os
+from dotenv import load_dotenv
 
 # Basisverzeichnis des Backend-Projekts
 # C:\00_mldata\programming\FinWise\FinWise_0.4_BE
 BACKEND_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Lade Umgebungsvariablen aus der .env-Datei im Backend-Root-Verzeichnis
+# Die .env Datei sollte sich im BACKEND_BASE_DIR befinden.
+dotenv_path = os.path.join(BACKEND_BASE_DIR, ".env")
+load_dotenv(dotenv_path)
 
 # Verzeichnis für die mandantenspezifischen Datenbanken
 TENANT_DATABASE_DIR = os.path.join(BACKEND_BASE_DIR, "tenant_databases")
