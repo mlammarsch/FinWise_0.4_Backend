@@ -16,18 +16,18 @@ from app.websocket.schemas import (
 from app.websocket.connection_manager import ConnectionManager, manager as websocket_manager_instance # Use the global manager instance
 
 
-async def create_account(
+def create_account( # Changed to sync, WebSocket logic moved to service layer
     db: Session,
     *,
     account_in: AccountPayload,
-    tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance,
-    exclude_websocket: Optional[WebSocket] = None
+    # tenant_id: str, # tenant_id is not directly used here for notification anymore
+    # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
+    # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> Account:
     """
-    Creates a new Account and notifies connected clients via WebSocket.
-    Allows excluding a specific websocket from notification.
+    Creates a new Account.
     The 'id' from account_in.id (which is a string UUID from frontend) will be used.
+    updatedAt from payload is respected.
     """
     db_account = Account(
         id=account_in.id,
@@ -43,22 +43,17 @@ async def create_account(
         balance=account_in.balance,
         creditLimit=account_in.creditLimit,
         offset=account_in.offset,
-        image=account_in.image
-        # createdAt and updatedAt have defaults
+        image=account_in.image,
+        # createdAt has a default
+        # updatedAt will be set explicitly if provided, otherwise model default
+        updatedAt=account_in.updated_at if account_in.updated_at else datetime.utcnow()
     )
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
 
-    # Notify via WebSocket
-    message = DataUpdateNotificationMessage(
-        event_type=ServerEventType.DATA_UPDATE,
-        tenant_id=tenant_id,
-        entity_type=EntityType.ACCOUNT,
-        operation_type=SyncOperationType.CREATE,
-        data=AccountPayload.model_validate(db_account) # Convert SQLAlchemy model to Pydantic model
-    )
-    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
+    # WebSocket notification logic is moved to the service layer
+    # to handle LWW decisions before notifying.
 
     return db_account
 
@@ -80,19 +75,19 @@ def get_accounts(
     return db.query(Account).offset(skip).limit(limit).all()
 
 
-async def update_account(
+def update_account( # Changed to sync
     db: Session,
     *,
     db_account: Account,
     account_in: AccountPayload,
-    tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance,
-    exclude_websocket: Optional[WebSocket] = None
+    # tenant_id: str, # Removed
+    # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
+    # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> Account:
     """
-    Updates an existing Account and notifies connected clients via WebSocket.
-    Allows excluding a specific websocket from notification.
+    Updates an existing Account.
     account_in contains all fields for update.
+    updatedAt from payload is respected if provided.
     """
     db_account.name = account_in.name
     db_account.description = account_in.description
@@ -107,36 +102,33 @@ async def update_account(
     db_account.creditLimit = account_in.creditLimit
     db_account.offset = account_in.offset
     db_account.image = account_in.image
-    # updatedAt will be updated by the model's onupdate
+
+    # Explicitly set updatedAt from payload if provided, otherwise let onupdate handle it
+    # This is crucial for LWW, as the incoming payload's timestamp must be respected if it's the "winner"
+    if account_in.updated_at:
+        db_account.updatedAt = account_in.updated_at
+    # If not provided, SQLAlchemy's onupdate will trigger if other fields changed.
+    # If only updatedAt was different and not provided in payload, it means we are keeping the DB version.
 
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
 
-    # Notify via WebSocket
-    message = DataUpdateNotificationMessage(
-        event_type=ServerEventType.DATA_UPDATE,
-        tenant_id=tenant_id,
-        entity_type=EntityType.ACCOUNT,
-        operation_type=SyncOperationType.UPDATE,
-        data=AccountPayload.model_validate(db_account) # Convert SQLAlchemy model to Pydantic model
-    )
-    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
+    # WebSocket notification logic is moved to the service layer.
 
     return db_account
 
 
-async def delete_account(
+def delete_account( # Changed to sync
     db: Session,
     *,
     account_id: str,
-    tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance,
-    exclude_websocket: Optional[WebSocket] = None
+    # tenant_id: str, # Removed
+    # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
+    # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> Optional[Account]:
     """
-    Deletes an Account by its ID and notifies connected clients via WebSocket.
-    Allows excluding a specific websocket from notification.
+    Deletes an Account by its ID.
     Returns the deleted object or None if not found.
     """
     db_account = get_account(db, account_id=account_id)
@@ -146,15 +138,7 @@ async def delete_account(
         db.delete(db_account)
         db.commit()
 
-        # Notify via WebSocket
-        message = DataUpdateNotificationMessage(
-            event_type=ServerEventType.DATA_UPDATE,
-            tenant_id=tenant_id,
-            entity_type=EntityType.ACCOUNT,
-            operation_type=SyncOperationType.DELETE,
-            data=DeletePayload(id=deleted_account_id)
-        )
-        await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
+        # WebSocket notification logic is moved to the service layer.
         return db_account # Return the object that was deleted (now detached from session)
     return None
 
