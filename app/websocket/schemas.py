@@ -114,3 +114,87 @@ class SyncQueueEntry(BaseModel):
 class ProcessSyncEntryMessage(BaseModel):
     type: Literal["process_sync_entry"] = "process_sync_entry"
     payload: SyncQueueEntry
+
+
+# Schemas for Server-to-Client WebSocket messages
+
+class ServerEventType(str, Enum):
+    """
+    Defines the type of event being sent from the server to the client.
+    """
+    DATA_UPDATE = "data_update"
+    # Future event types can be added here, e.g., ERROR_NOTIFICATION, GENERAL_MESSAGE
+
+
+# The 'data' field for a DATA_UPDATE notification message.
+# It can be a full Account or AccountGroup payload for create/update operations,
+# or a DeletePayload (containing just the ID) for delete operations.
+NotificationDataPayload = Union[AccountPayload, AccountGroupPayload, DeletePayload]
+
+
+class DataUpdateNotificationMessage(BaseModel):
+    """
+    Pydantic model for WebSocket messages sent from the server to clients
+    when data (Account, AccountGroup) is created, updated, or deleted.
+    """
+    event_type: Literal[ServerEventType.DATA_UPDATE] = ServerEventType.DATA_UPDATE
+    tenant_id: str  # UUID of the tenant as a string
+    entity_type: EntityType
+    operation_type: SyncOperationType
+    data: NotificationDataPayload
+
+    @validator('data', pre=True, always=True)
+    def validate_data_based_on_operation_and_entity(cls, v, values):
+        """
+        Validates that the 'data' payload matches the 'operation_type' and 'entity_type'.
+        - For DELETE: 'data' must be DeletePayload.
+        - For CREATE/UPDATE of Account: 'data' must be AccountPayload.
+        - For CREATE/UPDATE of AccountGroup: 'data' must be AccountGroupPayload.
+        """
+        op_type = values.get('operation_type')
+        entity_type = values.get('entity_type')
+
+        if op_type == SyncOperationType.DELETE:
+            if not isinstance(v, DeletePayload):
+                # Allow a dict that can be parsed into DeletePayload
+                if isinstance(v, dict) and 'id' in v:
+                    return DeletePayload(**v)
+                # If it's already a DeletePayload instance, it's fine
+                elif isinstance(v, DeletePayload):
+                    return v
+                raise ValueError(
+                    f"For DELETE operation, 'data' must be a DeletePayload or a dict with 'id'. Got: {type(v)}"
+                )
+        elif op_type in [SyncOperationType.CREATE, SyncOperationType.UPDATE]:
+            if entity_type == EntityType.ACCOUNT:
+                if not isinstance(v, AccountPayload):
+                    if isinstance(v, dict):
+                        return AccountPayload(**v)
+                    raise ValueError(
+                        f"For Account entity with {op_type.value} operation, 'data' must be AccountPayload. Got: {type(v)}"
+                    )
+            elif entity_type == EntityType.ACCOUNT_GROUP:
+                if not isinstance(v, AccountGroupPayload):
+                    if isinstance(v, dict):
+                        return AccountGroupPayload(**v)
+                    raise ValueError(
+                        f"For AccountGroup entity with {op_type.value} operation, 'data' must be AccountGroupPayload. Got: {type(v)}"
+                    )
+            else:
+                # This case should ideally not be reached if EntityType is exhaustive for operations
+                raise ValueError(f"Unsupported entity_type '{entity_type}' for CREATE/UPDATE operation.")
+        else:
+            # This case should ideally not be reached if SyncOperationType is exhaustive
+            raise ValueError(f"Unsupported operation_type: {op_type}")
+        return v
+
+    class Config:
+        use_enum_values = True
+        # If you want to allow arbitrary types for 'data' initially and validate later,
+        # you might need to adjust Pydantic's config or the validator.
+        # However, for strong typing, this structure is preferred.
+
+# Optional: A Union of all possible messages the server might send to the client.
+# This can be useful for type hinting in the ConnectionManager or endpoint.
+# ServerToClientMessage = Union[DataUpdateNotificationMessage, BackendStatusMessage]
+# For now, we'll handle DataUpdateNotificationMessage specifically.

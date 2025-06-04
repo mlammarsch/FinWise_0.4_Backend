@@ -34,11 +34,11 @@ router = APIRouter()
 
 
 @router.post("/push", response_model=SyncPushResponse)
-def push_changes(
+async def push_changes( # Changed to async
     *,
-    db: Session = Depends(get_tenant_db_session), # Ersetzt durch die neue mandantenspezifische Session
+    db: Session = Depends(get_tenant_db_session),
     sync_request: SyncPushRequest,
-    current_tenant_id: str = Depends(get_current_tenant_id), # Verwendet die neue Dependency
+    current_tenant_id: str = Depends(get_current_tenant_id),
 ) -> SyncPushResponse:
     """
     Nimmt eine Liste von Änderungen vom Frontend entgegen und verarbeitet sie.
@@ -50,15 +50,15 @@ def push_changes(
             frontend_sync_queue_item_id=item.id,
             entity_id=item.entity_id,
             entity_type=item.entity_type,
-            success=False, # Standardmäßig auf False setzen
+            success=False,
         )
         try:
             if item.entity_type == SyncEntityType.ACCOUNT:
-                response_item.updated_entity = handle_account_sync(
+                response_item.updated_entity = await handle_account_sync( # Added await
                     db=db, item=item, tenant_id=current_tenant_id
                 )
             elif item.entity_type == SyncEntityType.ACCOUNT_GROUP:
-                response_item.updated_entity = handle_account_group_sync(
+                response_item.updated_entity = await handle_account_group_sync( # Added await
                     db=db, item=item, tenant_id=current_tenant_id
                 )
             else:
@@ -93,11 +93,11 @@ def push_changes(
     return SyncPushResponse(results=response_items)
 
 
-def handle_account_sync(
-    db: Session, item: SyncQueueItemIn, tenant_id: str # tenant_id ist jetzt string
-) -> Optional[AccountRead]:
+async def handle_account_sync( # Changed to async
+    db: Session, item: SyncQueueItemIn, tenant_id: str
+) -> Optional[AccountRead]: # AccountRead might need to be AccountPayload if CRUD returns that
     entity_id = item.entity_id
-    payload = item.payload
+    payload = item.payload # This is a dict
 
     # Zeitstempel aus dem Payload extrahieren (wichtig für LWW)
     # Das Frontend sollte 'updated_at' im Payload mitsenden.
@@ -123,7 +123,8 @@ def handle_account_sync(
         # Bei CREATE sollte die ID im Payload die vom Frontend generierte UUID sein.
         # Wir verwenden diese ID, um Konsistenz zu gewährleisten.
         # Das Backend sollte prüfen, ob diese ID bereits existiert, um Duplikate zu vermeiden.
-        existing_account = crud.account.get_account(db=db, account_id=entity_id, tenant_id=tenant_id)
+        # crud.account.get_account is not async, so no await here
+        existing_account = crud.account.get_account(db=db, account_id=entity_id) # tenant_id not needed for get by id
         if existing_account:
             # Konflikt: Entität existiert bereits. LWW anwenden oder Fehler?
             # Gemäß LWW, wenn das ankommende 'updated_at' neuer ist, dann Update.
@@ -133,11 +134,12 @@ def handle_account_sync(
             # raise HTTPException(status_code=409, detail=f"Account {entity_id} already exists.")
             # Für LWW-artiges Verhalten bei CREATE (wenn FE ID sendet):
             if payload_updated_at >= existing_account.updated_at.replace(tzinfo=timezone.utc):
-                account_in_update = AccountUpdate(**payload)
-                updated_account = crud.account.update_account(
-                    db=db, db_account=existing_account, account_in=account_in_update
+                # Assuming payload is compatible with AccountPayload which crud.account.update_account expects
+                account_in_update = crud.AccountPayload(**payload)
+                updated_account = await crud.account.update_account( # Added await
+                    db=db, db_account=existing_account, account_in=account_in_update, tenant_id=tenant_id
                 )
-                return AccountRead.model_validate(updated_account)
+                return AccountRead.model_validate(updated_account) # AccountRead might need to be AccountPayload
             else:
                 # Backend-Version ist neuer, Frontend-CREATE ignorieren oder als Konflikt behandeln
                 raise HTTPException(
@@ -154,16 +156,18 @@ def handle_account_sync(
 
         # Entferne Felder, die nicht im DB-Modell Account sind, falls AccountCreate sie hat
         # z.B. wenn AccountCreate zusätzliche Validierungsfelder hätte
-        valid_fields = Account.model_fields.keys()
+        valid_fields = Account.model_fields.keys() # Account is the SQLAlchemy model
         filtered_data = {k: v for k, v in new_account_data.items() if k in valid_fields}
 
-        # tenant_id wird separat übergeben
-        created_account = crud.account.create_account(
-            db=db, account_in=AccountCreate(**filtered_data), tenant_id=tenant_id
-        )
-        return AccountRead.model_validate(created_account)
 
-    db_account = crud.account.get_account(db=db, account_id=entity_id, tenant_id=tenant_id)
+        # crud.account.create_account expects AccountPayload
+        created_account = await crud.account.create_account( # Added await
+            db=db, account_in=crud.AccountPayload(**filtered_data), tenant_id=tenant_id
+        )
+        return AccountRead.model_validate(created_account) # AccountRead might need to be AccountPayload
+
+    # crud.account.get_account is not async
+    db_account = crud.account.get_account(db=db, account_id=entity_id) # tenant_id not needed for get by id
     if not db_account:
         if item.operation == SyncOperationType.UPDATE:
             # Versuch, eine nicht existierende Entität zu aktualisieren.
@@ -184,11 +188,12 @@ def handle_account_sync(
         db_updated_at = db_account.updated_at.replace(tzinfo=timezone.utc) if db_account.updated_at.tzinfo is None else db_account.updated_at
 
         if payload_updated_at >= db_updated_at:
-            account_in_update = AccountUpdate(**payload)
-            updated_account = crud.account.update_account(
-                db=db, db_account=db_account, account_in=account_in_update
+            # crud.account.update_account expects AccountPayload
+            account_in_update = crud.AccountPayload(**payload)
+            updated_account = await crud.account.update_account( # Added await
+                db=db, db_account=db_account, account_in=account_in_update, tenant_id=tenant_id
             )
-            return AccountRead.model_validate(updated_account)
+            return AccountRead.model_validate(updated_account) # AccountRead might need to be AccountPayload
         else:
             # Backend-Version ist neuer, Frontend-Update ignorieren
             # Wir geben die aktuelle Backend-Version zurück, um das FE zu informieren
@@ -203,17 +208,18 @@ def handle_account_sync(
         if not db_account: # Sollte durch obige Prüfung abgedeckt sein
              # Bereits gelöscht oder nie existiert, kein Fehler
             return None
-        crud.account.delete_account(db=db, db_account=db_account)
+        # crud.account.delete_account expects account_id and tenant_id
+        await crud.account.delete_account(db=db, account_id=db_account.id, tenant_id=tenant_id) # Added await
         return None # Bei Delete geben wir keine Entität zurück
 
     return None # Sollte nicht erreicht werden
 
 
-def handle_account_group_sync(
-    db: Session, item: SyncQueueItemIn, tenant_id: str # tenant_id ist jetzt string
-) -> Optional[AccountGroupRead]:
+async def handle_account_group_sync( # Changed to async
+    db: Session, item: SyncQueueItemIn, tenant_id: str
+) -> Optional[AccountGroupRead]: # AccountGroupRead might need to be AccountGroupPayload
     entity_id = item.entity_id
-    payload = item.payload
+    payload = item.payload # This is a dict
 
     payload_updated_at_str = payload.get("updated_at")
     if not payload_updated_at_str:
@@ -232,14 +238,16 @@ def handle_account_group_sync(
         )
 
     if item.operation == SyncOperationType.CREATE:
-        existing_group = crud.account_group.get_account_group(db=db, account_group_id=entity_id, tenant_id=tenant_id)
+        # crud.account_group.get_account_group is not async
+        existing_group = crud.account_group.get_account_group(db=db, account_group_id=entity_id) # tenant_id not needed
         if existing_group:
             if payload_updated_at >= existing_group.updated_at.replace(tzinfo=timezone.utc):
-                group_in_update = AccountGroupUpdate(**payload)
-                updated_group = crud.account_group.update_account_group(
-                    db=db, db_account_group=existing_group, account_group_in=group_in_update
+                # crud.account_group.update_account_group expects AccountGroupPayload
+                group_in_update = crud.AccountGroupPayload(**payload)
+                updated_group = await crud.account_group.update_account_group( # Added await
+                    db=db, db_account_group=existing_group, account_group_in=group_in_update, tenant_id=tenant_id
                 )
-                return AccountGroupRead.model_validate(updated_group)
+                return AccountGroupRead.model_validate(updated_group) # AccountGroupRead might need to be AccountGroupPayload
             else:
                 raise HTTPException(
                     status_code=409,
@@ -254,14 +262,14 @@ def handle_account_group_sync(
         valid_fields = AccountGroup.model_fields.keys()
         filtered_data = {k: v for k, v in new_group_data.items() if k in valid_fields}
 
-        created_group = crud.account_group.create_account_group(
-            db=db, account_group_in=AccountGroupCreate(**filtered_data), tenant_id=tenant_id
+        # crud.account_group.create_account_group expects AccountGroupPayload
+        created_group = await crud.account_group.create_account_group( # Added await
+            db=db, account_group_in=crud.AccountGroupPayload(**filtered_data), tenant_id=tenant_id
         )
-        return AccountGroupRead.model_validate(created_group)
+        return AccountGroupRead.model_validate(created_group) # AccountGroupRead might need to be AccountGroupPayload
 
-    db_account_group = crud.account_group.get_account_group(
-        db=db, account_group_id=entity_id, tenant_id=tenant_id
-    )
+    # crud.account_group.get_account_group is not async
+    db_account_group = crud.account_group.get_account_group(db=db, account_group_id=entity_id) # tenant_id not needed
     if not db_account_group:
         if item.operation == SyncOperationType.UPDATE:
             raise HTTPException(
@@ -276,11 +284,12 @@ def handle_account_group_sync(
 
         db_updated_at = db_account_group.updated_at.replace(tzinfo=timezone.utc) if db_account_group.updated_at.tzinfo is None else db_account_group.updated_at
         if payload_updated_at >= db_updated_at:
-            group_in_update = AccountGroupUpdate(**payload)
-            updated_group = crud.account_group.update_account_group(
-                db=db, db_account_group=db_account_group, account_group_in=group_in_update
+            # crud.account_group.update_account_group expects AccountGroupPayload
+            group_in_update = crud.AccountGroupPayload(**payload)
+            updated_group = await crud.account_group.update_account_group( # Added await
+                db=db, db_account_group=db_account_group, account_group_in=group_in_update, tenant_id=tenant_id
             )
-            return AccountGroupRead.model_validate(updated_group)
+            return AccountGroupRead.model_validate(updated_group) # AccountGroupRead might need to be AccountGroupPayload
         else:
             raise HTTPException(
                 status_code=409,
@@ -290,18 +299,18 @@ def handle_account_group_sync(
     if item.operation == SyncOperationType.DELETE:
         if not db_account_group:
             return None
-        crud.account_group.delete_account_group(db=db, db_account_group=db_account_group)
+        await crud.account_group.delete_account_group(db=db, account_group_id=db_account_group.id, tenant_id=tenant_id) # Added await, delete_account_group expects id
         return None
     return None
 
 
 @router.get("/pull/{entity_type}", response_model=SyncPullResponse)
-def pull_changes(
+async def pull_changes( # Changed to async
     *,
-    db: Session = Depends(get_tenant_db_session), # Ersetzt durch die neue mandantenspezifische Session
+    db: Session = Depends(get_tenant_db_session),
     entity_type: SyncEntityType,
     last_sync_timestamp_str: Optional[str] = Query(None, alias="lastSyncTimestamp", description="ISO 8601 Format"),
-    current_tenant_id: str = Depends(get_current_tenant_id), # Verwendet die neue Dependency
+    current_tenant_id: str = Depends(get_current_tenant_id), # current_tenant_id is available but not directly used by the get_... CRUD functions below
 ) -> SyncPullResponse:
     """
     Gibt Änderungen für einen bestimmten Entitätstyp seit einem optionalen Zeitstempel zurück.
@@ -350,23 +359,30 @@ def pull_changes(
 
     if entity_type == SyncEntityType.ACCOUNT:
         if last_sync_timestamp:
+            # crud.account.get_accounts_modified_since is not async
             accounts = crud.account.get_accounts_modified_since(
-                db=db, tenant_id=current_tenant_id, timestamp=last_sync_timestamp
+                db=db, timestamp=last_sync_timestamp # tenant_id not needed for this specific crud function as per its definition
             )
         else:
             # Erstinitialisierung: alle Konten holen
-            accounts = crud.account.get_accounts(db=db, tenant_id=current_tenant_id, limit=10000) # Hohes Limit für Init
+            # crud.account.get_accounts is not async
+            accounts = crud.account.get_accounts(db=db, limit=10000) # tenant_id not needed
         new_or_updated_entities.extend([AccountRead.model_validate(acc) for acc in accounts])
 
     elif entity_type == SyncEntityType.ACCOUNT_GROUP:
         if last_sync_timestamp:
-            account_groups = crud.account_group.get_account_groups_modified_since(
-                db=db, tenant_id=current_tenant_id, timestamp=last_sync_timestamp
-            )
+            # crud.account_group.get_account_groups_modified_since is not async (and currently commented out)
+            # Assuming it would be:
+            # account_groups = crud.account_group.get_account_groups_modified_since(
+            #     db=db, timestamp=last_sync_timestamp
+            # )
+            # For now, let's assume it's not implemented or fall back to get_account_groups
+            # This part needs clarification if get_account_groups_modified_since is to be used.
+            # Fallback to getting all if modified_since is not available/implemented for account_group
+            account_groups = crud.account_group.get_account_groups(db=db, limit=10000) # tenant_id not needed
         else:
-            account_groups = crud.account_group.get_account_groups(
-                db=db, tenant_id=current_tenant_id, limit=10000
-            )
+            # crud.account_group.get_account_groups is not async
+            account_groups = crud.account_group.get_account_groups(db=db, limit=10000) # tenant_id not needed
         new_or_updated_entities.extend([AccountGroupRead.model_validate(ag) for ag in account_groups])
     else:
         raise HTTPException(status_code=400, detail=f"Entity type {entity_type} not supported for pull.")

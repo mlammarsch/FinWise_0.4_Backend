@@ -1,16 +1,29 @@
+import asyncio # Required for running async websocket calls from sync functions if needed, or making functions async
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy.orm import Session # Changed from sqlmodel import Session
-# from uuid import UUID # IDs are now strings
+from sqlalchemy.orm import Session
 
-# Use the new SQLAlchemy models and Pydantic schemas
 from app.models.financial_models import Account
-from app.websocket.schemas import AccountPayload # For type hinting create/update data
+from app.websocket.schemas import (
+    AccountPayload,
+    DataUpdateNotificationMessage,
+    EntityType,
+    SyncOperationType,
+    DeletePayload,
+    ServerEventType
+)
+from app.websocket.connection_manager import ConnectionManager, manager as websocket_manager_instance # Use the global manager instance
 
 
-def create_account(db: Session, *, account_in: AccountPayload) -> Account:
+async def create_account(
+    db: Session,
+    *,
+    account_in: AccountPayload,
+    tenant_id: str,
+    websocket_manager: ConnectionManager = websocket_manager_instance
+) -> Account:
     """
-    Creates a new Account.
+    Creates a new Account and notifies connected clients via WebSocket.
     The 'id' from account_in.id (which is a string UUID from frontend) will be used.
     """
     db_account = Account(
@@ -33,6 +46,17 @@ def create_account(db: Session, *, account_in: AccountPayload) -> Account:
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
+
+    # Notify via WebSocket
+    message = DataUpdateNotificationMessage(
+        event_type=ServerEventType.DATA_UPDATE,
+        tenant_id=tenant_id,
+        entity_type=EntityType.ACCOUNT,
+        operation_type=SyncOperationType.CREATE,
+        data=AccountPayload.model_validate(db_account) # Convert SQLAlchemy model to Pydantic model
+    )
+    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+
     return db_account
 
 
@@ -53,11 +77,16 @@ def get_accounts(
     return db.query(Account).offset(skip).limit(limit).all()
 
 
-def update_account(
-    db: Session, *, db_account: Account, account_in: AccountPayload
+async def update_account(
+    db: Session,
+    *,
+    db_account: Account,
+    account_in: AccountPayload,
+    tenant_id: str,
+    websocket_manager: ConnectionManager = websocket_manager_instance
 ) -> Account:
     """
-    Updates an existing Account.
+    Updates an existing Account and notifies connected clients via WebSocket.
     account_in contains all fields for update.
     """
     db_account.name = account_in.name
@@ -78,19 +107,49 @@ def update_account(
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
+
+    # Notify via WebSocket
+    message = DataUpdateNotificationMessage(
+        event_type=ServerEventType.DATA_UPDATE,
+        tenant_id=tenant_id,
+        entity_type=EntityType.ACCOUNT,
+        operation_type=SyncOperationType.UPDATE,
+        data=AccountPayload.model_validate(db_account) # Convert SQLAlchemy model to Pydantic model
+    )
+    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+
     return db_account
 
 
-def delete_account(db: Session, *, account_id: str) -> Optional[Account]:
+async def delete_account(
+    db: Session,
+    *,
+    account_id: str,
+    tenant_id: str,
+    websocket_manager: ConnectionManager = websocket_manager_instance
+) -> Optional[Account]:
     """
-    Deletes an Account by its ID.
+    Deletes an Account by its ID and notifies connected clients via WebSocket.
     Returns the deleted object or None if not found.
     """
     db_account = get_account(db, account_id=account_id)
     if db_account:
+        # Store id before deleting, as it might not be accessible after deletion from session
+        deleted_account_id = db_account.id
         db.delete(db_account)
         db.commit()
-    return db_account
+
+        # Notify via WebSocket
+        message = DataUpdateNotificationMessage(
+            event_type=ServerEventType.DATA_UPDATE,
+            tenant_id=tenant_id,
+            entity_type=EntityType.ACCOUNT,
+            operation_type=SyncOperationType.DELETE,
+            data=DeletePayload(id=deleted_account_id)
+        )
+        await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+        return db_account # Return the object that was deleted (now detached from session)
+    return None
 
 
 def get_accounts_modified_since(
