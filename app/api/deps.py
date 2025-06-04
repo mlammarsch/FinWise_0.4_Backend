@@ -35,7 +35,7 @@ async def get_tenant_db_session(
         )
 
     try:
-        engine = get_tenant_engine(tenant_id)
+        engine = create_tenant_db_engine(tenant_id)
         TenantSessionLocal.configure(bind=engine)
         db = TenantSessionLocal()
         yield db

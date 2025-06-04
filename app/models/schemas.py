@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 # User Schemas
 class UserBase(BaseModel):
@@ -76,8 +77,8 @@ class AccountBase(BaseModel):
     accountGroupId: str
     sortOrder: int | None = 0
     iban: str | None = None
-    balance: float | None = 0.0
-    creditLimit: float | None = 0.0
+    balance: Decimal | None = Decimal('0.0')
+    creditLimit: Decimal | None = Decimal('0.0')
     offset: int | None = 0
     image: str | None = None
 

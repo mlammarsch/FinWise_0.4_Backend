@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, Integer, Float, ForeignKey, DateTime, Text
+from sqlalchemy import Column, String, Boolean, Integer, Float, ForeignKey, DateTime, Text, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.postgresql import UUID # Using PostgreSQL UUID type for compatibility, can be adapted
@@ -43,8 +43,8 @@ class Account(TenantBase):
 
     sortOrder = Column(Integer, nullable=False, default=0)
     iban = Column(String, nullable=True)
-    balance = Column(Float, nullable=False, default=0.0)
-    creditLimit = Column(Float, nullable=True, default=0.0)
+    balance = Column(Numeric(10, 2), nullable=False, default=0.0)
+    creditLimit = Column(Numeric(10, 2), nullable=True, default=0.0)
     offset = Column(Integer, nullable=False, default=0) # Assuming offset is an integer
     image = Column(String, nullable=True)
 
