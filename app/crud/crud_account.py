@@ -2,6 +2,7 @@ import asyncio # Required for running async websocket calls from sync functions 
 from datetime import datetime
 from typing import List, Optional
 from sqlalchemy.orm import Session
+from fastapi import WebSocket # Added for type hinting
 
 from app.models.financial_models import Account
 from app.websocket.schemas import (
@@ -20,10 +21,12 @@ async def create_account(
     *,
     account_in: AccountPayload,
     tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance
+    websocket_manager: ConnectionManager = websocket_manager_instance,
+    exclude_websocket: Optional[WebSocket] = None
 ) -> Account:
     """
     Creates a new Account and notifies connected clients via WebSocket.
+    Allows excluding a specific websocket from notification.
     The 'id' from account_in.id (which is a string UUID from frontend) will be used.
     """
     db_account = Account(
@@ -55,7 +58,7 @@ async def create_account(
         operation_type=SyncOperationType.CREATE,
         data=AccountPayload.model_validate(db_account) # Convert SQLAlchemy model to Pydantic model
     )
-    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
 
     return db_account
 
@@ -83,10 +86,12 @@ async def update_account(
     db_account: Account,
     account_in: AccountPayload,
     tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance
+    websocket_manager: ConnectionManager = websocket_manager_instance,
+    exclude_websocket: Optional[WebSocket] = None
 ) -> Account:
     """
     Updates an existing Account and notifies connected clients via WebSocket.
+    Allows excluding a specific websocket from notification.
     account_in contains all fields for update.
     """
     db_account.name = account_in.name
@@ -116,7 +121,7 @@ async def update_account(
         operation_type=SyncOperationType.UPDATE,
         data=AccountPayload.model_validate(db_account) # Convert SQLAlchemy model to Pydantic model
     )
-    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
 
     return db_account
 
@@ -126,10 +131,12 @@ async def delete_account(
     *,
     account_id: str,
     tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance
+    websocket_manager: ConnectionManager = websocket_manager_instance,
+    exclude_websocket: Optional[WebSocket] = None
 ) -> Optional[Account]:
     """
     Deletes an Account by its ID and notifies connected clients via WebSocket.
+    Allows excluding a specific websocket from notification.
     Returns the deleted object or None if not found.
     """
     db_account = get_account(db, account_id=account_id)
@@ -147,7 +154,7 @@ async def delete_account(
             operation_type=SyncOperationType.DELETE,
             data=DeletePayload(id=deleted_account_id)
         )
-        await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+        await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
         return db_account # Return the object that was deleted (now detached from session)
     return None
 

@@ -1,5 +1,5 @@
 from fastapi import WebSocket
-from typing import Dict, Set
+from typing import Dict, Set, Optional
 import json
 from app.websocket.schemas import BackendStatusMessage # Import Pydantic model
 from app.utils.logger import debugLog
@@ -61,14 +61,18 @@ class ConnectionManager:
                 details={"tenant_id": tenant_id, "message_length": len(message), "connection_count": len(self.active_connections[tenant_id])}
             )
 
-    async def broadcast_json_to_tenant(self, message: dict, tenant_id: str):
+    async def broadcast_json_to_tenant(self, message: dict, tenant_id: str, exclude_websocket: Optional[WebSocket] = None):
         if tenant_id in self.active_connections:
+            sent_to_count = 0
             for connection in self.active_connections[tenant_id]:
+                if exclude_websocket and connection == exclude_websocket:
+                    continue
                 await connection.send_json(message)
+                sent_to_count += 1
             debugLog(
                 "ConnectionManager",
                 f"Broadcasted JSON message to tenant: {tenant_id}",
-                details={"tenant_id": tenant_id, "message_keys": list(message.keys()), "connection_count": len(self.active_connections[tenant_id])}
+                details={"tenant_id": tenant_id, "message_keys": list(message.keys()), "connection_count": len(self.active_connections[tenant_id]), "sent_to_count": sent_to_count, "excluded_a_connection": bool(exclude_websocket)}
             )
 
     async def broadcast_to_all(self, message: str): # Keep as string for now

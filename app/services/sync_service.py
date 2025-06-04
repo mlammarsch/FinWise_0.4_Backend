@@ -1,4 +1,6 @@
 from sqlalchemy.orm import Session
+from typing import Optional # Added for Optional WebSocket
+from fastapi import WebSocket # Added for WebSocket type hint
 from app.websocket.schemas import SyncQueueEntry, EntityType, SyncOperationType, AccountPayload, AccountGroupPayload, DeletePayload
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
 from app.models.financial_models import TenantBase # Important: Use the Base from financial_models
@@ -22,12 +24,13 @@ def get_tenant_db_session(tenant_id: str) -> Session:
     db = TenantSessionLocal()
     return db
 
-def process_sync_entry(entry: SyncQueueEntry) -> bool:
+def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[WebSocket] = None) -> bool:
     """
     Processes a single SyncQueueEntry and performs the necessary CRUD operation
     in the respective tenant's database.
+    If source_websocket is provided, it will be excluded from notifications.
     """
-    debugLog(MODULE_NAME, f"Processing sync entry: {entry.id} for tenant {entry.tenantId}", details=entry.model_dump())
+    debugLog(MODULE_NAME, f"Processing sync entry: {entry.id} for tenant {entry.tenantId}", details={**entry.model_dump(), "has_source_websocket": bool(source_websocket)})
 
     db: Optional[Session] = None
     try:
@@ -46,7 +49,7 @@ def process_sync_entry(entry: SyncQueueEntry) -> bool:
                 if not isinstance(payload, AccountPayload):
                     errorLog(MODULE_NAME, "Invalid payload type for Account CREATE", details=payload)
                     return False
-                crud_account.create_account(db=db, account_in=payload)
+                crud_account.create_account(db=db, account_in=payload, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                 infoLog(MODULE_NAME, f"Created Account {payload.id} for tenant {entry.tenantId}")
             elif operation_type == SyncOperationType.UPDATE:
                 if not isinstance(payload, AccountPayload):
@@ -54,18 +57,18 @@ def process_sync_entry(entry: SyncQueueEntry) -> bool:
                     return False
                 db_account = crud_account.get_account(db=db, account_id=entity_id)
                 if db_account:
-                    crud_account.update_account(db=db, db_account=db_account, account_in=payload)
+                    crud_account.update_account(db=db, db_account=db_account, account_in=payload, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                     infoLog(MODULE_NAME, f"Updated Account {entity_id} for tenant {entry.tenantId}")
                 else:
                     # If account not found for update, we could choose to create it (upsert)
                     # For now, log an error. This might happen if a create message was missed.
                     errorLog(MODULE_NAME, f"Account {entity_id} not found for UPDATE in tenant {entry.tenantId}")
                     # Potentially create it:
-                    # crud_account.create_account(db=db, account_in=payload)
+                    # crud_account.create_account(db=db, account_in=payload, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                     # infoLog(MODULE_NAME, f"Created Account {payload.id} (during update attempt) for tenant {entry.tenantId}")
                     return False
             elif operation_type == SyncOperationType.DELETE:
-                deleted_account = crud_account.delete_account(db=db, account_id=entity_id)
+                deleted_account = crud_account.delete_account(db=db, account_id=entity_id, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                 if deleted_account:
                     infoLog(MODULE_NAME, f"Deleted Account {entity_id} for tenant {entry.tenantId}")
                 else:
@@ -76,7 +79,7 @@ def process_sync_entry(entry: SyncQueueEntry) -> bool:
                 if not isinstance(payload, AccountGroupPayload):
                     errorLog(MODULE_NAME, "Invalid payload type for AccountGroup CREATE", details=payload)
                     return False
-                crud_account_group.create_account_group(db=db, account_group_in=payload)
+                crud_account_group.create_account_group(db=db, account_group_in=payload, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                 infoLog(MODULE_NAME, f"Created AccountGroup {payload.id} for tenant {entry.tenantId}")
             elif operation_type == SyncOperationType.UPDATE:
                 if not isinstance(payload, AccountGroupPayload):
@@ -84,21 +87,21 @@ def process_sync_entry(entry: SyncQueueEntry) -> bool:
                     return False
                 db_account_group = crud_account_group.get_account_group(db=db, account_group_id=entity_id)
                 if db_account_group:
-                    crud_account_group.update_account_group(db=db, db_account_group=db_account_group, account_group_in=payload)
+                    crud_account_group.update_account_group(db=db, db_account_group=db_account_group, account_group_in=payload, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                     infoLog(MODULE_NAME, f"Updated AccountGroup {entity_id} for tenant {entry.tenantId}")
                 else:
                     errorLog(MODULE_NAME, f"AccountGroup {entity_id} not found for UPDATE in tenant {entry.tenantId}")
                     # Potentially create it:
-                    # crud_account_group.create_account_group(db=db, account_group_in=payload)
+                    # crud_account_group.create_account_group(db=db, account_group_in=payload, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                     # infoLog(MODULE_NAME, f"Created AccountGroup {payload.id} (during update attempt) for tenant {entry.tenantId}")
                     return False
             elif operation_type == SyncOperationType.DELETE:
                 # Ensure payload for delete is just an ID or None
-                if payload is not None and not isinstance(payload, DeletePayload):
+                if payload is not None and not isinstance(payload, DeletePayload): # This check might be redundant if entityId is always used
                      errorLog(MODULE_NAME, "Invalid payload type for AccountGroup DELETE, should be DeletePayload or None", details=payload)
                      # return False # Or proceed if entityId is reliable
 
-                deleted_group = crud_account_group.delete_account_group(db=db, account_group_id=entity_id)
+                deleted_group = crud_account_group.delete_account_group(db=db, account_group_id=entity_id, tenant_id=entry.tenantId, exclude_websocket=source_websocket)
                 if deleted_group:
                     infoLog(MODULE_NAME, f"Deleted AccountGroup {entity_id} for tenant {entry.tenantId}")
                 else:

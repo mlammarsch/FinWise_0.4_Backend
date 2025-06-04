@@ -1,6 +1,7 @@
 import asyncio # Required for running async websocket calls from sync functions if needed, or making functions async
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from fastapi import WebSocket # Added for type hinting
 # from uuid import UUID # IDs are strings now
 
 from app.models.financial_models import AccountGroup
@@ -33,10 +34,12 @@ async def create_account_group(
     *,
     account_group_in: AccountGroupPayload,
     tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance
+    websocket_manager: ConnectionManager = websocket_manager_instance,
+    exclude_websocket: Optional[WebSocket] = None
 ) -> AccountGroup:
     """
     Creates a new AccountGroup and notifies connected clients via WebSocket.
+    Allows excluding a specific websocket from notification.
     The 'id' from account_group_in.id (which is a string UUID from frontend) will be used.
     """
     db_account_group = AccountGroup(
@@ -58,7 +61,7 @@ async def create_account_group(
         operation_type=SyncOperationType.CREATE,
         data=AccountGroupPayload.model_validate(db_account_group) # Convert SQLAlchemy model to Pydantic model
     )
-    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
 
     return db_account_group
 
@@ -68,10 +71,12 @@ async def update_account_group(
     db_account_group: AccountGroup,
     account_group_in: AccountGroupPayload,
     tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance
+    websocket_manager: ConnectionManager = websocket_manager_instance,
+    exclude_websocket: Optional[WebSocket] = None
 ) -> AccountGroup:
     """
     Updates an existing AccountGroup and notifies connected clients via WebSocket.
+    Allows excluding a specific websocket from notification.
     account_group_in contains all fields for update, not partial.
     """
     db_account_group.name = account_group_in.name
@@ -91,7 +96,7 @@ async def update_account_group(
         operation_type=SyncOperationType.UPDATE,
         data=AccountGroupPayload.model_validate(db_account_group) # Convert SQLAlchemy model to Pydantic model
     )
-    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+    await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
 
     return db_account_group
 
@@ -100,10 +105,12 @@ async def delete_account_group(
     *,
     account_group_id: str,
     tenant_id: str,
-    websocket_manager: ConnectionManager = websocket_manager_instance
+    websocket_manager: ConnectionManager = websocket_manager_instance,
+    exclude_websocket: Optional[WebSocket] = None
 ) -> Optional[AccountGroup]:
     """
     Deletes an AccountGroup by its ID and notifies connected clients via WebSocket.
+    Allows excluding a specific websocket from notification.
     Returns the deleted object or None if not found.
     """
     db_account_group = get_account_group(db, account_group_id=account_group_id)
@@ -120,9 +127,9 @@ async def delete_account_group(
             operation_type=SyncOperationType.DELETE,
             data=DeletePayload(id=deleted_account_group_id)
         )
-        await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id)
+        await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
         return db_account_group # Return the object that was deleted (now detached from session)
-    return None
+        return None
 
 # Potentially a function to get AccountGroups modified since a certain timestamp,
 # similar to what's in crud_account.py, could be added here if needed for sync later.

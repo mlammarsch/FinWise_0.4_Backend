@@ -58,7 +58,7 @@ async def websocket_endpoint(
                         # Process the sync entry using the service
                         # This is a synchronous call within an async function.
                         # For long-running tasks, consider background tasks.
-                        success = sync_service.process_sync_entry(sync_entry_message.payload)
+                        success = sync_service.process_sync_entry(sync_entry_message.payload, source_websocket=websocket)
 
                         if success:
                             infoLog(
