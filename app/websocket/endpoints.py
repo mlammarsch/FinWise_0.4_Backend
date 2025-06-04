@@ -1,12 +1,14 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.orm import Session
-import json # Import json for potential string conversion if needed, though Pydantic handles it
+import json
+from pydantic import ValidationError
 
 from app.api import deps
 from app.websocket.connection_manager import manager
-from app.models.user_tenant_models import User
-from app.websocket.schemas import BackendStatusMessage # Import Pydantic model
-from app.utils.logger import debugLog, errorLog # Added errorLog for consistency
+# from app.models.user_tenant_models import User # Not directly used in this endpoint for now
+from app.websocket.schemas import BackendStatusMessage, ProcessSyncEntryMessage # Import new schema
+from app.services import sync_service # Import the new sync service
+from app.utils.logger import debugLog, errorLog, infoLog # Added infoLog
 
 router = APIRouter()
 
@@ -38,17 +40,91 @@ async def websocket_endpoint(
             debugLog(
                 "WebSocketEndpoints",
                 f"Received text data from client for tenant {tenant_id}",
-                details={"tenant_id": tenant_id, "client_host": websocket.client.host if websocket.client else "Unknown", "data_length": len(data), "data_preview": data[:100]} # Preview first 100 chars
+                details={"tenant_id": tenant_id, "client_host": websocket.client.host if websocket.client else "Unknown", "data_length": len(data), "data_preview": data[:100]}
             )
-            # Process received message (currently just echoing)
-            # For now, we'll keep the echo simple.
-            # In a real scenario, you'd parse 'data' and react accordingly.
-            await manager.send_personal_message(f"Nachricht empfangen: {data}", websocket)
-            debugLog(
-                "WebSocketEndpoints",
-                f"Echoed message back to client for tenant {tenant_id}",
-                details={"tenant_id": tenant_id, "client_host": websocket.client.host if websocket.client else "Unknown", "data_length": len(data)}
-            )
+
+            try:
+                message_data = json.loads(data)
+                message_type = message_data.get("type")
+
+                if message_type == "process_sync_entry":
+                    try:
+                        sync_entry_message = ProcessSyncEntryMessage(**message_data)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received process_sync_entry for tenant {tenant_id}, entity {sync_entry_message.payload.entityType.value} {sync_entry_message.payload.entityId}",
+                            details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id}
+                        )
+                        # Process the sync entry using the service
+                        # This is a synchronous call within an async function.
+                        # For long-running tasks, consider background tasks.
+                        success = sync_service.process_sync_entry(sync_entry_message.payload)
+
+                        if success:
+                            infoLog(
+                                "WebSocketEndpoints",
+                                f"Successfully processed sync entry {sync_entry_message.payload.id} for tenant {tenant_id}",
+                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id}
+                            )
+                            # TODO: Send confirmation back to client (Step 8)
+                            # await manager.send_personal_json_message({"type": "sync_ack", "id": sync_entry_message.payload.id, "status": "processed"}, websocket)
+                        else:
+                            errorLog(
+                                "WebSocketEndpoints",
+                                f"Failed to process sync entry {sync_entry_message.payload.id} for tenant {tenant_id}",
+                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id}
+                            )
+                            # TODO: Send error back to client (Step 8)
+                            # await manager.send_personal_json_message({"type": "sync_nack", "id": sync_entry_message.payload.id, "status": "failed", "reason": "processing_error"}, websocket)
+
+                    except ValidationError as ve:
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Validation error for process_sync_entry message from tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "error": ve.errors(), "data": data[:200]}
+                        )
+                        # Optionally send a specific error message back to the client
+                        # await manager.send_personal_json_message({"type": "error", "message": "Invalid sync entry format", "details": ve.errors()}, websocket)
+                    except Exception as proc_e: # Catch errors during processing
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error processing sync_entry message for tenant {tenant_id}: {str(proc_e)}",
+                            details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
+                        )
+                        # TODO: Send error back to client (Step 8)
+
+                elif message_type: # Handle other known message types if any
+                    debugLog(
+                        "WebSocketEndpoints",
+                        f"Received unhandled message type '{message_type}' from tenant {tenant_id}",
+                        details={"tenant_id": tenant_id, "data": data[:200]}
+                    )
+                    # Echo back for unknown types for now, or handle them
+                    await manager.send_personal_message(f"Unbekannter Nachrichtentyp empfangen: {message_type}", websocket)
+                else: # No type field or unknown structure
+                    debugLog(
+                        "WebSocketEndpoints",
+                        f"Received message without 'type' field or unknown structure from tenant {tenant_id}",
+                        details={"tenant_id": tenant_id, "data": data[:200]}
+                    )
+                    await manager.send_personal_message(f"Nachricht ohne Typfeld empfangen: {data[:50]}...", websocket)
+
+            except json.JSONDecodeError:
+                errorLog(
+                    "WebSocketEndpoints",
+                    f"Received invalid JSON from client for tenant {tenant_id}",
+                    details={"tenant_id": tenant_id, "data": data[:200]} # Log only a preview
+                )
+                await manager.send_personal_message("Fehler: Ungültiges JSON-Format.", websocket)
+            except Exception as e_outer: # Catch any other unexpected errors in the loop
+                 errorLog(
+                    "WebSocketEndpoints",
+                    f"Outer loop exception for tenant {tenant_id}: {str(e_outer)}",
+                    details={"tenant_id": tenant_id, "error": str(e_outer), "data": data[:200]}
+                )
+                # Consider if we should break or continue based on the error.
+                # For now, we log and continue, but a critical error might warrant a disconnect.
+
     except WebSocketDisconnect:
         manager.disconnect(websocket, tenant_id)
         debugLog(

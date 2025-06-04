@@ -1,93 +1,104 @@
 from datetime import datetime
 from typing import List, Optional
-from uuid import UUID
+from sqlalchemy.orm import Session # Changed from sqlmodel import Session
+# from uuid import UUID # IDs are now strings
 
-from sqlmodel import Session, select
+# Use the new SQLAlchemy models and Pydantic schemas
+from app.models.financial_models import Account
+from app.websocket.schemas import AccountPayload # For type hinting create/update data
 
-from app.models.account import Account, AccountCreate, AccountUpdate
 
-
-def create_account(db: Session, *, account_in: AccountCreate, tenant_id: str) -> Account: # tenant_id ist jetzt string
-    # Stelle sicher, dass tenant_id als UUID behandelt wird, falls das Modell es so erwartet
-    # oder konvertiere es hier. Da das Modell UUID erwartet, konvertieren wir es.
-    # Wenn `get_current_tenant_id` bereits eine UUID liefert, ist dies nicht nötig.
-    # Da `get_current_tenant_id` in deps.py `str` zurückgibt, aber das Modell `UUID` für tenant_id hat,
-    # müssen wir hier oder im Modell anpassen.
-    # Annahme: Das Modell Account.tenant_id bleibt UUID.
-    try:
-        tenant_uuid = UUID(tenant_id)
-    except ValueError:
-        # Handle den Fall, dass tenant_id keine gültige UUID ist
-        # Dies sollte idealerweise nicht passieren, wenn die tenant_id korrekt generiert/übergeben wird.
-        raise ValueError(f"Ungültige tenant_id: {tenant_id}")
-
-    db_account = Account.model_validate(account_in, update={"tenant_id": tenant_uuid})
-    # created_at und updated_at werden durch default_factory gesetzt
+def create_account(db: Session, *, account_in: AccountPayload) -> Account:
+    """
+    Creates a new Account.
+    The 'id' from account_in.id (which is a string UUID from frontend) will be used.
+    """
+    db_account = Account(
+        id=account_in.id,
+        name=account_in.name,
+        description=account_in.description,
+        note=account_in.note,
+        accountType=account_in.accountType.value, # Use enum value
+        isActive=account_in.isActive,
+        isOfflineBudget=account_in.isOfflineBudget,
+        accountGroupId=account_in.accountGroupId,
+        sortOrder=account_in.sortOrder,
+        iban=account_in.iban,
+        balance=account_in.balance,
+        creditLimit=account_in.creditLimit,
+        offset=account_in.offset,
+        image=account_in.image
+        # createdAt and updatedAt have defaults
+    )
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
     return db_account
 
 
-def get_account(db: Session, *, account_id: UUID, tenant_id: str) -> Optional[Account]: # tenant_id ist jetzt string
-    try:
-        tenant_uuid = UUID(tenant_id)
-    except ValueError:
-        raise ValueError(f"Ungültige tenant_id: {tenant_id}")
-    return db.exec(
-        select(Account).where(Account.id == account_id, Account.tenant_id == tenant_uuid)
-    ).first()
+def get_account(db: Session, *, account_id: str) -> Optional[Account]:
+    """
+    Retrieves an Account by its ID.
+    IDs are stored as strings.
+    """
+    return db.query(Account).filter(Account.id == account_id).first()
 
 
 def get_accounts(
-    db: Session, *, tenant_id: str, skip: int = 0, limit: int = 100 # tenant_id ist jetzt string
+    db: Session, skip: int = 0, limit: int = 100
 ) -> List[Account]:
-    try:
-        tenant_uuid = UUID(tenant_id)
-    except ValueError:
-        raise ValueError(f"Ungültige tenant_id: {tenant_id}")
-    return db.exec(
-        select(Account).where(Account.tenant_id == tenant_uuid).offset(skip).limit(limit)
-    ).all()
+    """
+    Retrieves a list of Accounts.
+    """
+    return db.query(Account).offset(skip).limit(limit).all()
 
 
 def update_account(
-    db: Session, *, db_account: Account, account_in: AccountUpdate
+    db: Session, *, db_account: Account, account_in: AccountPayload
 ) -> Account:
-    account_data = account_in.model_dump(exclude_unset=True)
-    for key, value in account_data.items():
-        setattr(db_account, key, value)
-    db_account.updated_at = datetime.utcnow()
+    """
+    Updates an existing Account.
+    account_in contains all fields for update.
+    """
+    db_account.name = account_in.name
+    db_account.description = account_in.description
+    db_account.note = account_in.note
+    db_account.accountType = account_in.accountType.value # Use enum value
+    db_account.isActive = account_in.isActive
+    db_account.isOfflineBudget = account_in.isOfflineBudget
+    db_account.accountGroupId = account_in.accountGroupId
+    db_account.sortOrder = account_in.sortOrder
+    db_account.iban = account_in.iban
+    db_account.balance = account_in.balance
+    db_account.creditLimit = account_in.creditLimit
+    db_account.offset = account_in.offset
+    db_account.image = account_in.image
+    # updatedAt will be updated by the model's onupdate
+
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
     return db_account
 
 
-def delete_account(db: Session, *, db_account: Account) -> Account:
-    # Für Soft-Delete müsste hier ein 'deleted_at' Feld gesetzt werden.
-    # Aktuell: Hard-Delete
-    db.delete(db_account)
-    db.commit()
-    # Rückgabe des gelöschten Objekts (oder nur ID/Status) kann variieren.
-    # Da es gelöscht ist, kann db.refresh(db_account) fehlschlagen.
-    # Wir geben das Objekt zurück, wie es vor dem Löschen war (ohne Refresh).
+def delete_account(db: Session, *, account_id: str) -> Optional[Account]:
+    """
+    Deletes an Account by its ID.
+    Returns the deleted object or None if not found.
+    """
+    db_account = get_account(db, account_id=account_id)
+    if db_account:
+        db.delete(db_account)
+        db.commit()
     return db_account
 
 
 def get_accounts_modified_since(
-    db: Session, *, tenant_id: str, timestamp: datetime # tenant_id ist jetzt string
+    db: Session, *, timestamp: datetime
 ) -> List[Account]:
     """
-    Ruft alle Konten ab, die seit dem gegebenen Zeitstempel für den Mandanten
-    erstellt oder aktualisiert wurden.
+    Retrieves all accounts that were created or updated since the given timestamp.
     """
-    try:
-        tenant_uuid = UUID(tenant_id)
-    except ValueError:
-        raise ValueError(f"Ungültige tenant_id: {tenant_id}")
-    return db.exec(
-        select(Account)
-        .where(Account.tenant_id == tenant_uuid)
-        .where(Account.updated_at >= timestamp) # updated_at >= last_sync für Änderungen und neue
-    ).all()
+    # This function might be useful for a full sync later, but not directly for processing individual queue entries.
+    # For now, it's adapted to the new model structure.
+    return db.query(Account).filter(Account.updatedAt >= timestamp).all()
