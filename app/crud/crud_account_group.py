@@ -129,7 +129,7 @@ async def delete_account_group(
         )
         await websocket_manager.broadcast_json_to_tenant(message.model_dump(), tenant_id, exclude_websocket=exclude_websocket)
         return db_account_group # Return the object that was deleted (now detached from session)
-        return None
+    return None
 
 # Potentially a function to get AccountGroups modified since a certain timestamp,
 # similar to what's in crud_account.py, could be added here if needed for sync later.
