@@ -55,6 +55,7 @@ class AccountPayload(BaseModel):
 
     class Config:
         use_enum_values = False # Enum-Objekte intern verwenden
+        from_attributes = True
 
 class AccountGroupPayload(BaseModel):
     id: str # UUID as string from frontend
@@ -65,6 +66,7 @@ class AccountGroupPayload(BaseModel):
 
     class Config:
         use_enum_values = False # Enum-Objekte intern verwenden
+        from_attributes = True
 
 # For DELETE operation, payload might just contain the ID or be null
 class DeletePayload(BaseModel):
@@ -192,8 +194,20 @@ class DataUpdateNotificationMessage(BaseModel):
         - For CREATE/UPDATE of Account: 'data' must be AccountPayload.
         - For CREATE/UPDATE of AccountGroup: 'data' must be AccountGroupPayload.
         """
-        op_type = values.get('operation_type')
-        entity_type = values.get('entity_type')
+        op_type_raw = values.get('operation_type') # This will be a string due to use_enum_values=True
+        entity_type = values.get('entity_type') # This should be an Enum member
+
+        # Convert op_type_raw string to SyncOperationType enum member for reliable comparison
+        op_type: Optional[SyncOperationType] = None
+        if isinstance(op_type_raw, str):
+            try:
+                op_type = SyncOperationType(op_type_raw)
+            except ValueError:
+                raise ValueError(f"Invalid operation_type string: {op_type_raw}")
+        elif isinstance(op_type_raw, SyncOperationType): # Should not happen with use_enum_values=True but good for robustness
+            op_type = op_type_raw
+        else:
+            raise ValueError(f"Unexpected type for operation_type: {type(op_type_raw)}")
 
         if op_type == SyncOperationType.DELETE:
             if not isinstance(v, DeletePayload):
@@ -206,7 +220,7 @@ class DataUpdateNotificationMessage(BaseModel):
                 raise ValueError(
                     f"For DELETE operation, 'data' must be a DeletePayload or a dict with 'id'. Got: {type(v)}"
                 )
-        elif op_type in [SyncOperationType.CREATE, SyncOperationType.UPDATE]:
+        elif op_type == SyncOperationType.CREATE or op_type == SyncOperationType.UPDATE: # Explicit comparison
             if entity_type == EntityType.ACCOUNT:
                 if not isinstance(v, AccountPayload):
                     if isinstance(v, dict):
