@@ -49,7 +49,25 @@ async def websocket_endpoint(
 
                 if message_type == "process_sync_entry":
                     try:
+                        # Log incoming payload types before Pydantic validation
+                        payload_data = message_data.get("payload", {})
+                        entity_type_raw = payload_data.get("entityType")
+                        operation_type_raw = payload_data.get("operationType")
+                        debugLog(
+                            "WebSocketEndpoints",
+                            f"Pre-validation: entityType raw: {entity_type_raw} (type: {type(entity_type_raw)}), operationType raw: {operation_type_raw} (type: {type(operation_type_raw)})",
+                            details={"tenant_id": tenant_id, "raw_message_data": message_data}
+                        )
+
                         sync_entry_message = ProcessSyncEntryMessage(**message_data)
+
+                        # Log types after Pydantic validation
+                        debugLog(
+                            "WebSocketEndpoints",
+                            f"Post-validation: entityType: {sync_entry_message.payload.entityType} (type: {type(sync_entry_message.payload.entityType)}), operationType: {sync_entry_message.payload.operationType} (type: {type(sync_entry_message.payload.operationType)})",
+                            details={"tenant_id": tenant_id, "payload_id": sync_entry_message.payload.id}
+                        )
+
                         infoLog(
                             "WebSocketEndpoints",
                             f"Received process_sync_entry for tenant {tenant_id}, entity {sync_entry_message.payload.entityType.value} {sync_entry_message.payload.entityId}",

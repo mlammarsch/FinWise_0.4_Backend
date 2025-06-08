@@ -4,6 +4,13 @@ from enum import Enum
 from pydantic import Field, validator
 from uuid import UUID
 import datetime # Python's datetime, not Pydantic's
+import logging # Standard-Logging als Fallback
+try:
+    from app.utils.logger import app_logger as logger
+except ImportError:
+    logger = logging.getLogger(__name__)
+    if not logger.hasHandlers():
+        logging.basicConfig(level=logging.DEBUG) # Einfache Konfiguration falls kein Handler da ist
 
 class BackendStatusMessage(BaseModel):
     """
@@ -13,16 +20,16 @@ class BackendStatusMessage(BaseModel):
     status: str  # e.g., "online", "maintenance"
 
 # Enum definitions based on frontend types
-class EntityType(str, Enum):
+class EntityType(Enum):
     ACCOUNT = "Account"
     ACCOUNT_GROUP = "AccountGroup"
 
-class SyncOperationType(str, Enum):
+class SyncOperationType(Enum):
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
 
-class AccountType(str, Enum):
+class AccountType(Enum):
     CHECKING = 'CHECKING'
     SAVINGS = 'SAVINGS'
     CREDIT = 'CREDIT'
@@ -77,25 +84,35 @@ class SyncQueueEntry(BaseModel):
 
     @validator('entityType', pre=True, always=True)
     def ensure_entity_type_is_enum(cls, v):
-        if isinstance(v, str):
-            try:
-                return EntityType(v)
-            except ValueError:
-                raise ValueError(f"Ungültiger Wert für EntityType: {v}")
         if isinstance(v, EntityType):
+            logger.debug(f"Validator ensure_entity_type_is_enum returning existing enum: {type(v)} - {v}")
             return v
-        raise TypeError(f"Ungültiger Typ für EntityType: {type(v)}")
+        if isinstance(v, str):
+            # Case-insensitive matching
+            for member in EntityType:
+                if member.value.lower() == v.lower():
+                    logger.debug(f"Validator ensure_entity_type_is_enum returning new enum from string: {type(member)} - {member}")
+                    return member # Gibt das Enum-Mitglied zurück
+            # If no match, raise error
+            expected_values = [e.value for e in EntityType]
+            raise ValueError(f"Ungültiger Wert '{v}' für EntityType. Erwartet einen von (case-insensitive): {expected_values}")
+        raise TypeError(f"Ungültiger Typ für EntityType: {type(v)}. Erwartet str oder EntityType.")
 
     @validator('operationType', pre=True, always=True)
     def ensure_operation_type_is_enum(cls, v):
-        if isinstance(v, str):
-            try:
-                return SyncOperationType(v)
-            except ValueError:
-                raise ValueError(f"Ungültiger Wert für SyncOperationType: {v}")
         if isinstance(v, SyncOperationType):
+            logger.debug(f"Validator ensure_operation_type_is_enum returning existing enum: {type(v)} - {v}")
             return v
-        raise TypeError(f"Ungültiger Typ für SyncOperationType: {type(v)}")
+        if isinstance(v, str):
+            # Case-insensitive matching
+            for member in SyncOperationType:
+                if member.value.lower() == v.lower():
+                    logger.debug(f"Validator ensure_operation_type_is_enum returning new enum from string: {type(member)} - {member}")
+                    return member # Gibt das Enum-Mitglied zurück
+            # If no match, raise error
+            expected_values = [e.value for e in SyncOperationType]
+            raise ValueError(f"Ungültiger Wert '{v}' für SyncOperationType. Erwartet einen von (case-insensitive): {expected_values}")
+        raise TypeError(f"Ungültiger Typ für SyncOperationType: {type(v)}. Erwartet str oder SyncOperationType.")
 
     @validator('payload', pre=True, always=True)
     def validate_payload_based_on_operation(cls, v, values):
@@ -130,7 +147,7 @@ class SyncQueueEntry(BaseModel):
         return v
 
     class Config:
-        use_enum_values = True
+        use_enum_values = False # Sicherstellen, dass Enum-Objekte intern verwendet werden
         extra = 'ignore' # Ignore fields like 'status' from frontend if sent
 
 class ProcessSyncEntryMessage(BaseModel):
@@ -140,7 +157,7 @@ class ProcessSyncEntryMessage(BaseModel):
 
 # Schemas for Server-to-Client WebSocket messages
 
-class ServerEventType(str, Enum):
+class ServerEventType(Enum):
     """
     Defines the type of event being sent from the server to the client.
     """
