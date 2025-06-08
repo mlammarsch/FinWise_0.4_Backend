@@ -75,6 +75,28 @@ class SyncQueueEntry(BaseModel):
     # status: SyncStatus # Status from frontend, not strictly needed for backend processing validation
                         # but good to be aware of. We'll define our own status for responses.
 
+    @validator('entityType', pre=True, always=True)
+    def ensure_entity_type_is_enum(cls, v):
+        if isinstance(v, str):
+            try:
+                return EntityType(v)
+            except ValueError:
+                raise ValueError(f"Ungültiger Wert für EntityType: {v}")
+        if isinstance(v, EntityType):
+            return v
+        raise TypeError(f"Ungültiger Typ für EntityType: {type(v)}")
+
+    @validator('operationType', pre=True, always=True)
+    def ensure_operation_type_is_enum(cls, v):
+        if isinstance(v, str):
+            try:
+                return SyncOperationType(v)
+            except ValueError:
+                raise ValueError(f"Ungültiger Wert für SyncOperationType: {v}")
+        if isinstance(v, SyncOperationType):
+            return v
+        raise TypeError(f"Ungültiger Typ für SyncOperationType: {type(v)}")
+
     @validator('payload', pre=True, always=True)
     def validate_payload_based_on_operation(cls, v, values):
         op_type = values.get('operationType')
