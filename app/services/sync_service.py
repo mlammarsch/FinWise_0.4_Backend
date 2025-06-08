@@ -189,7 +189,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                 entry.tenantId,
                 exclude_websocket=source_websocket
             )
-            debugLog(MODULE_NAME, f"Sent notification for {entity_type.value} {entity_id}", details=message.model_dump())
+            debugLog(MODULE_NAME, f"Sent notification for {str(entity_type)} {entity_id}", details=message.model_dump())
 
         return True
 
