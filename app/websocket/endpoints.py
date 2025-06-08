@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from app.api import deps
 from app.websocket.connection_manager import manager
 # from app.models.user_tenant_models import User # Not directly used in this endpoint for now
-from app.websocket.schemas import BackendStatusMessage, ProcessSyncEntryMessage # Import new schema
+from app.websocket.schemas import BackendStatusMessage, ProcessSyncEntryMessage, SyncAckMessage, SyncNackMessage # Import new schemas
 from app.services import sync_service # Import the new sync service
 from app.utils.logger import debugLog, errorLog, infoLog # Added infoLog
 
@@ -76,7 +76,8 @@ async def websocket_endpoint(
                         # Process the sync entry using the service
                         # This is a synchronous call within an async function.
                         # For long-running tasks, consider background tasks.
-                        success = sync_service.process_sync_entry(sync_entry_message.payload, source_websocket=websocket)
+                        # The process_sync_entry now returns a tuple: (bool_success, str_reason_if_failed)
+                        success, reason_or_detail = await sync_service.process_sync_entry(sync_entry_message.payload, source_websocket=websocket)
 
                         if success:
                             infoLog(
@@ -84,32 +85,73 @@ async def websocket_endpoint(
                                 f"Successfully processed sync entry {sync_entry_message.payload.id} for tenant {tenant_id}",
                                 details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id}
                             )
-                            # TODO: Send confirmation back to client (Step 8)
-                            # await manager.send_personal_json_message({"type": "sync_ack", "id": sync_entry_message.payload.id, "status": "processed"}, websocket)
+                            ack_message = SyncAckMessage(
+                                id=sync_entry_message.payload.id,
+                                entityId=sync_entry_message.payload.entityId,
+                                entityType=sync_entry_message.payload.entityType,
+                                operationType=sync_entry_message.payload.operationType
+                            )
+                            await manager.send_personal_json_message(ack_message.model_dump(), websocket)
                         else:
                             errorLog(
                                 "WebSocketEndpoints",
-                                f"Failed to process sync entry {sync_entry_message.payload.id} for tenant {tenant_id}",
-                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id}
+                                f"Failed to process sync entry {sync_entry_message.payload.id} for tenant {tenant_id}. Reason: {reason_or_detail}",
+                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id, "reason": reason_or_detail}
                             )
-                            # TODO: Send error back to client (Step 8)
-                            # await manager.send_personal_json_message({"type": "sync_nack", "id": sync_entry_message.payload.id, "status": "failed", "reason": "processing_error"}, websocket)
+                            nack_message = SyncNackMessage(
+                                id=sync_entry_message.payload.id,
+                                entityId=sync_entry_message.payload.entityId,
+                                entityType=sync_entry_message.payload.entityType,
+                                operationType=sync_entry_message.payload.operationType,
+                                reason=reason_or_detail if reason_or_detail else "processing_error",
+                                detail=f"Failed to process sync entry {sync_entry_message.payload.id}" # Can be more specific if needed
+                            )
+                            await manager.send_personal_json_message(nack_message.model_dump(), websocket)
 
                     except ValidationError as ve:
+                        error_detail_for_client = f"Validation error for sync entry: {str(ve)}"
                         errorLog(
                             "WebSocketEndpoints",
                             f"Validation error for process_sync_entry message from tenant {tenant_id}",
                             details={"tenant_id": tenant_id, "error": ve.errors(), "data": data[:200]}
                         )
-                        # Optionally send a specific error message back to the client
-                        # await manager.send_personal_json_message({"type": "error", "message": "Invalid sync entry format", "details": ve.errors()}, websocket)
+                        # Send NACK for validation error
+                        try: # Try to get entry details for NACK, might fail if initial parsing failed badly
+                            sync_entry_message_for_nack = ProcessSyncEntryMessage(**message_data)
+                            nack_validation_message = SyncNackMessage(
+                                id=sync_entry_message_for_nack.payload.id if sync_entry_message_for_nack.payload else "unknown_entry_id",
+                                entityId=sync_entry_message_for_nack.payload.entityId if sync_entry_message_for_nack.payload else "unknown_entity_id",
+                                entityType=sync_entry_message_for_nack.payload.entityType if sync_entry_message_for_nack.payload else "Unknown", # Provide a default
+                                operationType=sync_entry_message_for_nack.payload.operationType if sync_entry_message_for_nack.payload else "Unknown", # Provide a default
+                                reason="validation_error",
+                                detail=error_detail_for_client
+                            )
+                            await manager.send_personal_json_message(nack_validation_message.model_dump(), websocket)
+                        except Exception: # Fallback if payload parsing for NACK fails
+                             await manager.send_personal_json_message({"type": "sync_nack", "id": message_data.get("payload", {}).get("id", "unknown"), "status": "failed", "reason": "validation_error", "detail": "Invalid message structure."}, websocket)
+
                     except Exception as proc_e: # Catch errors during processing
+                        error_detail_for_client = f"Error processing sync entry: {str(proc_e)}"
                         errorLog(
                             "WebSocketEndpoints",
                             f"Error processing sync_entry message for tenant {tenant_id}: {str(proc_e)}",
                             details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
                         )
-                        # TODO: Send error back to client (Step 8)
+                        # Send NACK for general processing error
+                        try: # Try to get entry details for NACK
+                            sync_entry_message_for_nack = ProcessSyncEntryMessage(**message_data)
+                            nack_processing_message = SyncNackMessage(
+                                id=sync_entry_message_for_nack.payload.id if sync_entry_message_for_nack.payload else "unknown_entry_id",
+                                entityId=sync_entry_message_for_nack.payload.entityId if sync_entry_message_for_nack.payload else "unknown_entity_id",
+                                entityType=sync_entry_message_for_nack.payload.entityType if sync_entry_message_for_nack.payload else "Unknown",
+                                operationType=sync_entry_message_for_nack.payload.operationType if sync_entry_message_for_nack.payload else "Unknown",
+                                reason="processing_error",
+                                detail=error_detail_for_client
+                            )
+                            await manager.send_personal_json_message(nack_processing_message.model_dump(), websocket)
+                        except Exception: # Fallback if payload parsing for NACK fails
+                            await manager.send_personal_json_message({"type": "sync_nack", "id": message_data.get("payload", {}).get("id", "unknown"), "status": "failed", "reason": "processing_error", "detail": "Internal server error during processing."}, websocket)
+
 
                 elif message_type: # Handle other known message types if any
                     debugLog(

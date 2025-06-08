@@ -6,6 +6,7 @@ import os
 import sqlite3
 from ..config import TENANT_DATABASE_DIR
 from ..utils.logger import infoLog, errorLog, debugLog, warnLog # Importiere den neuen Logger
+from .database import create_tenant_specific_tables # Importiere die neue Funktion
 
 from passlib.context import CryptContext
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -202,13 +203,22 @@ def create_tenant(db: Session, tenant: schemas.TenantCreate) -> models.Tenant:
             conn = sqlite3.connect(tenant_db_path)
             conn.close()
             infoLog(MODULE_NAME, f"Created tenant-specific database file: {tenant_db_path}", {"tenant_id": db_tenant.uuid})
-        else:
-            warnLog(MODULE_NAME, f"Tenant-specific database file already exists (no action taken): {tenant_db_path}", {"tenant_id": db_tenant.uuid})
 
-        return db_tenant # Tenant-Objekt erst nach erfolgreicher DB-Erstellung zurückgeben
+            # === NEU: Tabellen in der Mandanten-DB erstellen ===
+            create_tenant_specific_tables(db_tenant.uuid)
+            # =====================================================
+        else:
+            warnLog(MODULE_NAME, f"Tenant-specific database file already exists: {tenant_db_path}. Attempting to ensure tables exist.", {"tenant_id": db_tenant.uuid})
+            # Auch wenn die Datei existiert, könnten die Tabellen fehlen (z.B. durch einen vorherigen Fehler)
+            # Daher rufen wir create_tenant_specific_tables trotzdem auf.
+            # Die Funktion create_all ist idempotent und erstellt Tabellen nur, wenn sie nicht existieren.
+            create_tenant_specific_tables(db_tenant.uuid)
+
+        return db_tenant # Tenant-Objekt erst nach erfolgreicher DB-Erstellung und Tabellenerstellung zurückgeben
 
     except Exception as e:
-        errorLog(MODULE_NAME, f"Failed to create tenant-specific database file for tenant {db_tenant.uuid}: {str(e)}", {"tenant_id": db_tenant.uuid})
+        # Hier fangen wir Fehler sowohl von der Dateierstellung als auch von der Tabellenerstellung ab.
+        errorLog(MODULE_NAME, f"Failed during tenant-specific database setup (file or tables) for tenant {db_tenant.uuid}: {str(e)}", {"tenant_id": db_tenant.uuid})
         # WICHTIG: Da der Tenant bereits in der Haupt-DB commited wurde, hier aber die Datei-Erstellung fehlschlägt,
         # wäre ein Rollback des Haupt-DB-Eintrags ideal, aber komplexer (erfordert z.B. SAGA-Pattern oder Zwei-Phasen-Commit-Logik).
         # Für den Moment: Fehler loggen und Exception weiterwerfen. Der Aufrufer (Router) muss entscheiden, wie er damit umgeht.

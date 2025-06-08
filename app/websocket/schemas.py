@@ -233,7 +233,27 @@ class DataUpdateNotificationMessage(BaseModel):
         # you might need to adjust Pydantic's config or the validator.
         # However, for strong typing, this structure is preferred.
 
+class SyncAckMessage(BaseModel):
+    """Message sent from server to client to acknowledge successful processing of a sync entry."""
+    type: Literal["sync_ack"] = "sync_ack"
+    id: str  # Corresponds to the SyncQueueEntry.id that was processed
+    status: Literal["processed"] = "processed"
+    entityId: str # UUID of the entity that was synced
+    entityType: EntityType
+    operationType: SyncOperationType
+
+class SyncNackMessage(BaseModel):
+    """Message sent from server to client to signal failure in processing a sync entry."""
+    type: Literal["sync_nack"] = "sync_nack"
+    id: str  # Corresponds to the SyncQueueEntry.id that failed
+    status: Literal["failed"] = "failed"
+    entityId: str # UUID of the entity that failed to sync
+    entityType: EntityType
+    operationType: SyncOperationType
+    reason: str  # A brief reason for the failure, e.g., "database_error", "validation_error", "table_not_found"
+    detail: Optional[str] = None # More detailed error message if available
+
 # Optional: A Union of all possible messages the server might send to the client.
 # This can be useful for type hinting in the ConnectionManager or endpoint.
-# ServerToClientMessage = Union[DataUpdateNotificationMessage, BackendStatusMessage]
+ServerToClientMessage = Union[DataUpdateNotificationMessage, BackendStatusMessage, SyncAckMessage, SyncNackMessage]
 # For now, we'll handle DataUpdateNotificationMessage specifically.
