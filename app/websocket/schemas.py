@@ -41,11 +41,11 @@ class AccountPayload(BaseModel):
     name: str
     description: Optional[str] = None
     note: Optional[str] = None
-    accountType: AccountType
+    accountType: Optional[AccountType] = AccountType.CHECKING
     isActive: bool
     isOfflineBudget: bool
     accountGroupId: str # UUID as string from frontend
-    sortOrder: int
+    sortOrder: Optional[int] = 0
     iban: Optional[str] = None
     balance: float # Assuming balance can be float
     creditLimit: Optional[float] = None # Assuming creditLimit can be float
