@@ -1,7 +1,7 @@
-import asyncio # Required for running async websocket calls from sync functions if needed, or making functions async
+import asyncio  # Required for running async websocket calls from sync functions if needed, or making functions async
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from fastapi import WebSocket # Added for type hinting
+from fastapi import WebSocket  # Added for type hinting
 # from uuid import UUID # IDs are strings now
 
 from app.models.financial_models import AccountGroup
@@ -13,23 +13,19 @@ from app.websocket.schemas import (
     DeletePayload,
     ServerEventType
 )
-from app.websocket.connection_manager import ConnectionManager, manager as websocket_manager_instance # Use the global manager instance
+from app.websocket.connection_manager import ConnectionManager, manager as websocket_manager_instance  # Use the global manager instance
+from datetime import datetime
 
 
 def get_account_group(db: Session, account_group_id: str) -> Optional[AccountGroup]:
-    """
-    Retrieves an AccountGroup by its ID.
-    IDs are stored as strings (UUIDs represented as strings).
-    """
     return db.query(AccountGroup).filter(AccountGroup.id == account_group_id).first()
 
+
 def get_account_groups(db: Session, skip: int = 0, limit: int = 100) -> List[AccountGroup]:
-    """
-    Retrieves a list of AccountGroups.
-    """
     return db.query(AccountGroup).offset(skip).limit(limit).all()
 
-def create_account_group( # Changed to sync
+
+def create_account_group(  # Changed to sync
     db: Session,
     *,
     account_group_in: AccountGroupPayload,
@@ -37,13 +33,9 @@ def create_account_group( # Changed to sync
     # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
     # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> AccountGroup:
-    """
-    Creates a new AccountGroup.
-    The 'id' from account_group_in.id (which is a string UUID from frontend) will be used.
-    updatedAt from payload is respected.
-    """
+    """Creates a new AccountGroup."""
     db_account_group = AccountGroup(
-        id=account_group_in.id, # Use the ID from payload
+        id=account_group_in.id,  # Use the ID from payload
         name=account_group_in.name,
         sortOrder=account_group_in.sortOrder,
         image=account_group_in.image,
@@ -59,7 +51,8 @@ def create_account_group( # Changed to sync
 
     return db_account_group
 
-def update_account_group( # Changed to sync
+
+def update_account_group(  # Changed to sync
     db: Session,
     *,
     db_account_group: AccountGroup,
@@ -68,11 +61,7 @@ def update_account_group( # Changed to sync
     # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
     # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> AccountGroup:
-    """
-    Updates an existing AccountGroup.
-    account_group_in contains all fields for update, not partial.
-    updatedAt from payload is respected if provided.
-    """
+    """Updates an existing AccountGroup."""
     db_account_group.name = account_group_in.name
     db_account_group.sortOrder = account_group_in.sortOrder
     db_account_group.image = account_group_in.image
@@ -89,7 +78,8 @@ def update_account_group( # Changed to sync
 
     return db_account_group
 
-def delete_account_group( # Changed to sync
+
+def delete_account_group(  # Changed to sync
     db: Session,
     *,
     account_group_id: str,
@@ -97,10 +87,7 @@ def delete_account_group( # Changed to sync
     # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
     # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> Optional[AccountGroup]:
-    """
-    Deletes an AccountGroup by its ID.
-    Returns the deleted object or None if not found.
-    """
+    """Deletes an AccountGroup by its ID."""
     db_account_group = get_account_group(db, account_group_id=account_group_id)
     if db_account_group:
         deleted_account_group_id = db_account_group.id
@@ -108,7 +95,7 @@ def delete_account_group( # Changed to sync
         db.commit()
 
         # WebSocket notification logic is moved to the service layer.
-        return db_account_group # Return the object that was deleted (now detached from session)
+        return db_account_group  # Return the object that was deleted (now detached from session)
     return None
 
 # Potentially a function to get AccountGroups modified since a certain timestamp,

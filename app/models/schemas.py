@@ -29,7 +29,7 @@ class User(UserBase):
 # Schema für Benutzerdaten, die vom Frontend während des Syncs gesendet werden (enthält UUID, optional Passworthash)
 class UserSyncPayload(UserBase):
     uuid: str
-    hashed_password: str | None = None # Hinzugefügt für den Sync des Passwort-Hashes
+    hashed_password: str | None = None
 
 # Tenant Schemas
 class TenantBase(BaseModel):
@@ -37,7 +37,7 @@ class TenantBase(BaseModel):
 
 class TenantCreate(TenantBase):
     user_id: str
-    uuid: str | None = None # Füge optionales UUID-Feld hinzu
+    uuid: str | None = None
 
 class Tenant(TenantBase):
     uuid: str
@@ -55,8 +55,8 @@ class AccountGroupBase(BaseModel):
     image: str | None = None
 
 class AccountGroupPayload(AccountGroupBase):
-    id: str | None = None # Optional, da es beim Erstellen generiert oder vom Client gesendet werden kann
-    updated_at: datetime | None = None # Wird für LWW benötigt
+    id: str | None = None
+    updated_at: datetime | None = None
 
 class AccountGroupSchema(AccountGroupBase):
     id: str
@@ -71,7 +71,7 @@ class AccountBase(BaseModel):
     name: str
     description: str | None = None
     note: str | None = None
-    accountType: str # CHECKING, SAVINGS, etc.
+    accountType: str
     isActive: bool | None = True
     isOfflineBudget: bool | None = False
     accountGroupId: str
@@ -83,14 +83,13 @@ class AccountBase(BaseModel):
     image: str | None = None
 
 class AccountPayload(AccountBase):
-    id: str | None = None # Optional
-    updated_at: datetime | None = None # Wird für LWW benötigt
+    id: str | None = None
+    updated_at: datetime | None = None
 
 class AccountSchema(AccountBase):
     id: str
     createdAt: datetime
     updated_at: datetime
-    # account_group: AccountGroupSchema # Optional, falls verschachtelte Daten benötigt werden
 
     class Config:
         orm_mode = True

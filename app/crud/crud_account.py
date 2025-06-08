@@ -1,8 +1,8 @@
-import asyncio # Required for running async websocket calls from sync functions if needed, or making functions async
+import asyncio  # Required for running async websocket calls from sync functions if needed, or making functions async
 from datetime import datetime
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from fastapi import WebSocket # Added for type hinting
+from fastapi import WebSocket  # Added for type hinting
 
 from app.models.financial_models import Account
 from app.websocket.schemas import (
@@ -11,30 +11,26 @@ from app.websocket.schemas import (
     EntityType,
     SyncOperationType,
     DeletePayload,
-    ServerEventType
+    ServerEventType,
 )
-from app.websocket.connection_manager import ConnectionManager, manager as websocket_manager_instance # Use the global manager instance
+from app.websocket.connection_manager import (
+    ConnectionManager,
+    manager as websocket_manager_instance,
+)  # Use the global manager instance
 
 
-def create_account( # Changed to sync, WebSocket logic moved to service layer
+def create_account(  # Changed to sync, WebSocket logic moved to service layer
     db: Session,
     *,
     account_in: AccountPayload,
-    # tenant_id: str, # tenant_id is not directly used here for notification anymore
-    # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
-    # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> Account:
-    """
-    Creates a new Account.
-    The 'id' from account_in.id (which is a string UUID from frontend) will be used.
-    updatedAt from payload is respected.
-    """
+    """Creates a new Account."""
     db_account = Account(
         id=account_in.id,
         name=account_in.name,
         description=account_in.description,
         note=account_in.note,
-        accountType=account_in.accountType.value, # Use enum value
+        accountType=account_in.accountType.value,  # Use enum value
         isActive=account_in.isActive,
         isOfflineBudget=account_in.isOfflineBudget,
         accountGroupId=account_in.accountGroupId,
@@ -46,7 +42,7 @@ def create_account( # Changed to sync, WebSocket logic moved to service layer
         image=account_in.image,
         # createdAt has a default
         # updatedAt will be set explicitly if provided, otherwise model default
-        updatedAt=account_in.updated_at if account_in.updated_at else datetime.utcnow()
+        updatedAt=account_in.updated_at if account_in.updated_at else datetime.utcnow(),
     )
     db.add(db_account)
     db.commit()
@@ -59,40 +55,26 @@ def create_account( # Changed to sync, WebSocket logic moved to service layer
 
 
 def get_account(db: Session, *, account_id: str) -> Optional[Account]:
-    """
-    Retrieves an Account by its ID.
-    IDs are stored as strings.
-    """
+    """Retrieves an Account by its ID."""
     return db.query(Account).filter(Account.id == account_id).first()
 
 
-def get_accounts(
-    db: Session, skip: int = 0, limit: int = 100
-) -> List[Account]:
-    """
-    Retrieves a list of Accounts.
-    """
+def get_accounts(db: Session, skip: int = 0, limit: int = 100) -> List[Account]:
+    """Retrieves a list of Accounts."""
     return db.query(Account).offset(skip).limit(limit).all()
 
 
-def update_account( # Changed to sync
+def update_account(  # Changed to sync
     db: Session,
     *,
     db_account: Account,
     account_in: AccountPayload,
-    # tenant_id: str, # Removed
-    # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
-    # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> Account:
-    """
-    Updates an existing Account.
-    account_in contains all fields for update.
-    updatedAt from payload is respected if provided.
-    """
+    """Updates an existing Account."""
     db_account.name = account_in.name
     db_account.description = account_in.description
     db_account.note = account_in.note
-    db_account.accountType = account_in.accountType.value # Use enum value
+    db_account.accountType = account_in.accountType.value  # Use enum value
     db_account.isActive = account_in.isActive
     db_account.isOfflineBudget = account_in.isOfflineBudget
     db_account.accountGroupId = account_in.accountGroupId
@@ -119,18 +101,12 @@ def update_account( # Changed to sync
     return db_account
 
 
-def delete_account( # Changed to sync
+def delete_account(  # Changed to sync
     db: Session,
     *,
     account_id: str,
-    # tenant_id: str, # Removed
-    # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
-    # exclude_websocket: Optional[WebSocket] = None # Removed
 ) -> Optional[Account]:
-    """
-    Deletes an Account by its ID.
-    Returns the deleted object or None if not found.
-    """
+    """Deletes an Account by its ID."""
     db_account = get_account(db, account_id=account_id)
     if db_account:
         # Store id before deleting, as it might not be accessible after deletion from session
@@ -139,16 +115,16 @@ def delete_account( # Changed to sync
         db.commit()
 
         # WebSocket notification logic is moved to the service layer.
-        return db_account # Return the object that was deleted (now detached from session)
+        return (
+            db_account
+        )  # Return the object that was deleted (now detached from session)
     return None
 
 
 def get_accounts_modified_since(
     db: Session, *, timestamp: datetime
 ) -> List[Account]:
-    """
-    Retrieves all accounts that were created or updated since the given timestamp.
-    """
+    """Retrieves all accounts that were created or updated since the given timestamp."""
     # This function might be useful for a full sync later, but not directly for processing individual queue entries.
     # For now, it's adapted to the new model structure.
     return db.query(Account).filter(Account.updatedAt >= timestamp).all()
