@@ -51,18 +51,20 @@ class AccountPayload(BaseModel):
     creditLimit: Optional[float] = None # Assuming creditLimit can be float
     offset: int # Assuming offset is an integer
     image: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
 
     class Config:
-        use_enum_values = True
+        use_enum_values = False # Enum-Objekte intern verwenden
 
 class AccountGroupPayload(BaseModel):
     id: str # UUID as string from frontend
     name: str
     sortOrder: int
     image: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
 
     class Config:
-        use_enum_values = True
+        use_enum_values = False # Enum-Objekte intern verwenden
 
 # For DELETE operation, payload might just contain the ID or be null
 class DeletePayload(BaseModel):
@@ -242,6 +244,9 @@ class SyncAckMessage(BaseModel):
     entityType: EntityType
     operationType: SyncOperationType
 
+    class Config:
+        use_enum_values = True # Ensure enums are serialized as their values
+
 class SyncNackMessage(BaseModel):
     """Message sent from server to client to signal failure in processing a sync entry."""
     type: Literal["sync_nack"] = "sync_nack"
@@ -252,6 +257,9 @@ class SyncNackMessage(BaseModel):
     operationType: SyncOperationType
     reason: str  # A brief reason for the failure, e.g., "database_error", "validation_error", "table_not_found"
     detail: Optional[str] = None # More detailed error message if available
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized as their values
 
 # Optional: A Union of all possible messages the server might send to the client.
 # This can be useful for type hinting in the ConnectionManager or endpoint.
