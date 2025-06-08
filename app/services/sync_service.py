@@ -1,7 +1,11 @@
 from sqlalchemy.orm import Session
 from typing import Optional # Added for Optional WebSocket
 from fastapi import WebSocket # Added for WebSocket type hint
-from app.websocket.schemas import SyncQueueEntry, EntityType, SyncOperationType, AccountPayload, AccountGroupPayload, DeletePayload, DataUpdateNotificationMessage, ServerEventType
+from app.websocket.schemas import (
+    SyncQueueEntry, EntityType, SyncOperationType,
+    AccountPayload, AccountGroupPayload, DeletePayload,
+    DataUpdateNotificationMessage, ServerEventType, InitialDataPayload
+)
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
 from app.models.financial_models import TenantBase, Account, AccountGroup # Import Account and AccountGroup models
 from app.crud import crud_account, crud_account_group
@@ -217,6 +221,48 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
         error_msg = f"Generic error processing sync entry {entry.id} for tenant {entry.tenantId}: {str(e)}"
         errorLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(e)})
         return False, "generic_processing_error"
+    finally:
+        if db:
+            db.close()
+
+async def get_initial_data_for_tenant(tenant_id: str) -> tuple[Optional[InitialDataPayload], Optional[str]]:
+    """
+    Retrieves all accounts and account groups for a given tenant.
+    Returns a tuple: (InitialDataPayload | None, error_message | None)
+    """
+    debugLog(MODULE_NAME, f"Attempting to get initial data for tenant {tenant_id}")
+    db: Optional[Session] = None
+    try:
+        db = get_tenant_db_session(tenant_id)
+        if db is None:
+            error_msg = f"Could not get DB session for tenant {tenant_id} during initial data fetch."
+            errorLog(MODULE_NAME, error_msg)
+            return None, error_msg
+
+        accounts_db = crud_account.get_accounts(db=db)
+        account_groups_db = crud_account_group.get_account_groups(db=db)
+
+        accounts_payload = [AccountPayload.model_validate(acc) for acc in accounts_db]
+        account_groups_payload = [AccountGroupPayload.model_validate(ag) for ag in account_groups_db]
+
+        initial_data = InitialDataPayload(
+            accounts=accounts_payload,
+            account_groups=account_groups_payload
+        )
+        infoLog(MODULE_NAME, f"Successfully retrieved initial data for tenant {tenant_id}. Accounts: {len(accounts_payload)}, AccountGroups: {len(account_groups_payload)}")
+        return initial_data, None
+
+    except sqlite3.OperationalError as oe:
+        error_msg = f"Database operational error fetching initial data for tenant {tenant_id}: {str(oe)}"
+        error_reason = "database_operational_error"
+        if "no such table" in str(oe).lower():
+            error_reason = "table_not_found"
+        errorLog(MODULE_NAME, error_msg, details={"tenant_id": tenant_id, "error": str(oe), "reason": error_reason})
+        return None, error_reason
+    except Exception as e:
+        error_msg = f"Generic error fetching initial data for tenant {tenant_id}: {str(e)}"
+        errorLog(MODULE_NAME, error_msg, details={"tenant_id": tenant_id, "error": str(e)})
+        return None, "generic_initial_data_error"
     finally:
         if db:
             db.close()

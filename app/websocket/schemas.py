@@ -28,6 +28,7 @@ class SyncOperationType(Enum):
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
+    INITIAL_LOAD = "initial_load" # Hinzugefügt für den initialen Ladevorgang
 
 class AccountType(Enum):
     CHECKING = 'CHECKING'
@@ -54,7 +55,7 @@ class AccountPayload(BaseModel):
     updated_at: Optional[datetime.datetime] = None
 
     class Config:
-        use_enum_values = False # Enum-Objekte intern verwenden
+        use_enum_values = True # Enums als ihre Werte serialisieren
         from_attributes = True
 
 class AccountGroupPayload(BaseModel):
@@ -65,7 +66,7 @@ class AccountGroupPayload(BaseModel):
     updated_at: Optional[datetime.datetime] = None
 
     class Config:
-        use_enum_values = False # Enum-Objekte intern verwenden
+        use_enum_values = True # Enum-Objekte intern verwenden -> Geändert für Konsistenz und Zukunftssicherheit
         from_attributes = True
 
 # For DELETE operation, payload might just contain the ID or be null
@@ -158,6 +159,13 @@ class ProcessSyncEntryMessage(BaseModel):
     type: Literal["process_sync_entry"] = "process_sync_entry"
     payload: SyncQueueEntry
 
+class RequestInitialDataMessage(BaseModel):
+    """
+    Message sent from frontend to backend to request initial data for the tenant.
+    """
+    type: Literal["request_initial_data"] = "request_initial_data"
+    tenant_id: str # Zur Bestätigung, obwohl schon im WebSocket-Pfad
+
 
 # Schemas for Server-to-Client WebSocket messages
 
@@ -166,6 +174,7 @@ class ServerEventType(Enum):
     Defines the type of event being sent from the server to the client.
     """
     DATA_UPDATE = "data_update"
+    INITIAL_DATA_LOAD = "initial_data_load" # Hinzugefügt für den initialen Ladevorgang
     # Future event types can be added here, e.g., ERROR_NOTIFICATION, GENERAL_MESSAGE
 
 
@@ -180,7 +189,7 @@ class DataUpdateNotificationMessage(BaseModel):
     Pydantic model for WebSocket messages sent from the server to clients
     when data (Account, AccountGroup) is created, updated, or deleted.
     """
-    event_type: Literal[ServerEventType.DATA_UPDATE] = ServerEventType.DATA_UPDATE
+    event_type: ServerEventType = ServerEventType.DATA_UPDATE # Geändert von Literal
     tenant_id: str  # UUID of the tenant as a string
     entity_type: EntityType
     operation_type: SyncOperationType
@@ -195,7 +204,7 @@ class DataUpdateNotificationMessage(BaseModel):
         - For CREATE/UPDATE of AccountGroup: 'data' must be AccountGroupPayload.
         """
         op_type_raw = values.get('operation_type') # This will be a string due to use_enum_values=True
-        entity_type = values.get('entity_type') # This should be an Enum member
+        entity_type_raw = values.get('entity_type') # This will be a string due to use_enum_values=True
 
         # Convert op_type_raw string to SyncOperationType enum member for reliable comparison
         op_type: Optional[SyncOperationType] = None
@@ -208,6 +217,19 @@ class DataUpdateNotificationMessage(BaseModel):
             op_type = op_type_raw
         else:
             raise ValueError(f"Unexpected type for operation_type: {type(op_type_raw)}")
+
+        # Convert entity_type_raw string to EntityType enum member for reliable comparison
+        entity_type: Optional[EntityType] = None
+        if isinstance(entity_type_raw, str):
+            try:
+                entity_type = EntityType(entity_type_raw)
+            except ValueError:
+                # Log or handle the error if entity_type_raw is not a valid EntityType string
+                raise ValueError(f"Invalid entity_type string: {entity_type_raw}. Expected one of {[e.value for e in EntityType]}")
+        elif isinstance(entity_type_raw, EntityType): # Should not happen with use_enum_values=True but good for robustness
+            entity_type = entity_type_raw
+        else:
+            raise ValueError(f"Unexpected type for entity_type: {type(entity_type_raw)}. Expected str or EntityType.")
 
         if op_type == SyncOperationType.DELETE:
             if not isinstance(v, DeletePayload):
@@ -277,5 +299,28 @@ class SyncNackMessage(BaseModel):
 
 # Optional: A Union of all possible messages the server might send to the client.
 # This can be useful for type hinting in the ConnectionManager or endpoint.
-ServerToClientMessage = Union[DataUpdateNotificationMessage, BackendStatusMessage, SyncAckMessage, SyncNackMessage]
-# For now, we'll handle DataUpdateNotificationMessage specifically.
+
+# Payload for the initial data load message
+class InitialDataPayload(BaseModel):
+    accounts: list[AccountPayload] = Field(default_factory=list)
+    account_groups: list[AccountGroupPayload] = Field(default_factory=list)
+
+class InitialDataLoadMessage(BaseModel):
+    """
+    Message sent from server to client containing the initial set of data for a tenant.
+    """
+    event_type: ServerEventType = ServerEventType.INITIAL_DATA_LOAD # Geändert von Literal
+    tenant_id: str
+    payload: InitialDataPayload
+
+    class Config:
+        use_enum_values = True
+
+ServerToClientMessage = Union[
+    DataUpdateNotificationMessage,
+    BackendStatusMessage,
+    SyncAckMessage,
+    SyncNackMessage,
+    InitialDataLoadMessage # Hinzugefügt
+]
+# For now, we'll handle DataUpdateNotificationMessage and InitialDataLoadMessage specifically.

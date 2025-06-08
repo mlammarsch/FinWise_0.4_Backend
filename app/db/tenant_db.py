@@ -10,7 +10,7 @@ Base = declarative_base()
 # C:\00_mldata\programming\FinWise\FinWise_0.4_BE\tenant_databases
 # ..\..\tenant_databases ist relativ zu app\db\
 TENANT_DB_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "tenant_databases"))
-TENANT_DB_PREFIX = "tenant_" # Gemäß Planungsdokument und Testanforderungen
+TENANT_DB_PREFIX = "finwiseTenantDB_" # Gemäß Planungsdokument und Testanforderungen
 
 def get_tenant_db_url(tenant_uuid: str) -> str:
     db_name = f"{TENANT_DB_PREFIX}{tenant_uuid}.db"

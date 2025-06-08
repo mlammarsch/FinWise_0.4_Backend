@@ -2,11 +2,15 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.orm import Session
 import json
 from pydantic import ValidationError
+from fastapi.encoders import jsonable_encoder
 
 from app.api import deps
 from app.websocket.connection_manager import manager
 # from app.models.user_tenant_models import User # Not directly used in this endpoint for now
-from app.websocket.schemas import BackendStatusMessage, ProcessSyncEntryMessage, SyncAckMessage, SyncNackMessage # Import new schemas
+from app.websocket.schemas import (
+    BackendStatusMessage, ProcessSyncEntryMessage, SyncAckMessage, SyncNackMessage,
+    RequestInitialDataMessage, InitialDataLoadMessage, ServerEventType # Import new schemas for initial data load
+)
 from app.services import sync_service # Import the new sync service
 from app.utils.logger import debugLog, errorLog, infoLog # Added infoLog
 
@@ -152,6 +156,56 @@ async def websocket_endpoint(
                         except Exception: # Fallback if payload parsing for NACK fails
                             await manager.send_personal_json_message({"type": "sync_nack", "id": message_data.get("payload", {}).get("id", "unknown"), "status": "failed", "reason": "processing_error", "detail": "Internal server error during processing."}, websocket)
 
+
+                elif message_type == "request_initial_data":
+                    try:
+                        request_initial_data_message = RequestInitialDataMessage(**message_data)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received request_initial_data for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "client_host": websocket.client.host if websocket.client else "Unknown"}
+                        )
+
+                        initial_data_payload, error_msg = await sync_service.get_initial_data_for_tenant(tenant_id)
+
+                        if initial_data_payload:
+                            response_message = InitialDataLoadMessage(
+                                tenant_id=tenant_id,
+                                payload=initial_data_payload
+                            )
+                            await manager.send_personal_json_message(jsonable_encoder(response_message), websocket)
+                            infoLog(
+                                "WebSocketEndpoints",
+                                f"Sent initial_data_load to client for tenant {tenant_id}. Accounts: {len(initial_data_payload.accounts)}, Groups: {len(initial_data_payload.account_groups)}",
+                                details={"tenant_id": tenant_id}
+                            )
+                        else:
+                            errorLog(
+                                "WebSocketEndpoints",
+                                f"Failed to get initial data for tenant {tenant_id}: {error_msg}",
+                                details={"tenant_id": tenant_id, "error_message": error_msg}
+                            )
+                            # Optionally send an error message back to the client
+                            await manager.send_personal_json_message(
+                                {"type": "error", "message": f"Failed to load initial data: {error_msg}"},
+                                websocket
+                            )
+                    except ValidationError as ve:
+                        error_detail_for_client = f"Validation error for request_initial_data: {str(ve)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Validation error for request_initial_data message from tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "error": ve.errors(), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+                    except Exception as e_initial_data:
+                        error_detail_for_client = f"Error processing request_initial_data: {str(e_initial_data)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error processing request_initial_data for tenant {tenant_id}: {str(e_initial_data)}",
+                            details={"tenant_id": tenant_id, "error": str(e_initial_data), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
 
                 elif message_type: # Handle other known message types if any
                     debugLog(

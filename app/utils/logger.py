@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import enum # Hinzugefügt für Enum-Behandlung
 from logging.handlers import RotatingFileHandler
 # Stelle sicher, dass config.py zuerst geladen wird, um dotenv zu initialisieren
 from ..config import BACKEND_BASE_DIR # Importiert BACKEND_BASE_DIR
@@ -69,23 +70,42 @@ def setup_logger():
 _logger_instance = setup_logger()
 
 # --- Wrapper-Funktionen ---
+
+# Benutzerdefinierte default-Funktion für json.dumps, um Enums korrekt zu behandeln
+def enum_aware_default(obj):
+    if isinstance(obj, enum.Enum):
+        return obj.value
+    # Hier könnten weitere Typ-Handler hinzugefügt werden (z.B. datetime, UUID)
+    # Fallback auf die Standard-String-Repräsentation für andere Typen
+    try:
+        return str(obj)
+    except Exception:
+        return f"<unserializable_object_type_{type(obj).__name__}>"
+
 # Behalten die ursprüngliche Signatur bei.
 def _log(level: int, module_name: str, message: str, details: object = None):
     """
     Interne Log-Funktion, die Nachrichten an den konfigurierten Logger sendet.
     Das `details`-Objekt wird als JSON-String formatiert, falls vorhanden.
+    Enums im `details`-Objekt werden durch ihre Werte ersetzt.
     """
     log_message = message
     if details is not None:
         try:
             # Versuche, Details als JSON zu formatieren.
-            # default=str hilft bei der Serialisierung von nicht direkt JSON-serialisierbaren Objekten (z.B. datetime).
+            # enum_aware_default stellt sicher, dass Enums als ihre Werte serialisiert werden.
             # ensure_ascii=False erlaubt Unicode-Zeichen direkt im Output.
-            details_str = json.dumps(details, indent=2, ensure_ascii=False, default=str)
+            details_str = json.dumps(details, indent=2, ensure_ascii=False, default=enum_aware_default)
             log_message = f"{message} | Details: {details_str}"
-        except TypeError:
-            # Fallback, falls die JSON-Serialisierung fehlschlägt.
-            log_message = f"{message} | Details (nicht serialisierbar): {details}"
+        except TypeError as e: # Fange spezifisch TypeError bei der Serialisierung
+            # Fallback, falls die JSON-Serialisierung auch mit enum_aware_default fehlschlägt.
+            # Logge den Fehler und die problematischen Details.
+            _logger_instance.error(f"Failed to serialize log details for module {module_name}: {e}. Original details: {details}")
+            log_message = f"{message} | Details (nicht serialisierbar, siehe vorherigen Log-Fehler)"
+        except Exception as e_json: # Fange andere mögliche json.dumps Fehler
+            _logger_instance.error(f"Unexpected error serializing log details for module {module_name}: {e_json}. Original details: {details}")
+            log_message = f"{message} | Details (Serialisierungsfehler, siehe vorherigen Log-Fehler)"
+
 
     # Verwende den bereits initialisierten und konfigurierten Logger.
     # Der Name des Loggers wird hier nicht mehr dynamisch pro Modul geändert,
