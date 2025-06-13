@@ -17,8 +17,22 @@ import sqlite3  # Import sqlite3 to catch specific operational errors
 import hashlib  # Import hashlib for checksum calculation
 import json  # Import json for serialization
 import time  # Import time for timestamps
+from datetime import timezone  # Import timezone for datetime normalization
 
 MODULE_NAME = "SyncService"
+
+
+def normalize_datetime_for_comparison(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalisiert Datetime-Objekte für LWW-Vergleiche durch Konvertierung zu UTC."""
+    if dt is None:
+        return None
+
+    # Wenn bereits timezone-aware, zu UTC konvertieren
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+    # Wenn naive datetime, als UTC behandeln
+    return dt
 
 
 def get_tenant_db_session(tenant_id: str) -> Session:
@@ -47,6 +61,8 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
         payload = entry.payload  # This is AccountPayload or AccountGroupPayload or DeletePayload
         entity_id = entry.entityId
         incoming_updated_at: Optional[datetime] = getattr(payload, 'updated_at', None) if payload else None
+        # Normalisiere incoming datetime für LWW-Vergleiche
+        normalized_incoming_updated_at = normalize_datetime_for_comparison(incoming_updated_at)
 
         notification_data: Optional[AccountPayload | AccountGroupPayload | CategoryPayload | CategoryGroupPayload | DeletePayload] = None
         authoritative_data_used = False  # Flag to indicate if DB data was sent because incoming was old
@@ -60,7 +76,8 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
             if operation_type == SyncOperationType.CREATE:
                 existing_account = crud_account.get_account(db=db, account_id=entity_id)
                 if existing_account:  # Treat as update if ID already exists (rare case, but LWW applies)
-                    if incoming_updated_at and existing_account.updatedAt and incoming_updated_at > existing_account.updatedAt:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_account.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
                         updated_account = crud_account.update_account(db=db, db_account=existing_account, account_in=payload)
                         infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Account {entity_id}", details=payload)
                         notification_data = AccountPayload.model_validate(updated_account)
@@ -87,7 +104,8 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     return False, error_msg
                 db_account = crud_account.get_account(db=db, account_id=entity_id)
                 if db_account:
-                    if incoming_updated_at and db_account.updatedAt and incoming_updated_at > db_account.updatedAt:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(db_account.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
                         updated_account = crud_account.update_account(db=db, db_account=db_account, account_in=payload)
                         infoLog(MODULE_NAME, f"Updated Account {entity_id} (LWW win)", details=payload)
                         notification_data = AccountPayload.model_validate(updated_account)
@@ -174,55 +192,122 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                 return False, error_msg
 
             if operation_type == SyncOperationType.CREATE:
-                existing_category = crud_category.get_category(db=db, category_id=entity_id)
-                if existing_category:  # Treat as update if ID already exists
-                    if incoming_updated_at and existing_category.updatedAt and incoming_updated_at > existing_category.updatedAt:
-                        updated_category = crud_category.update_category(db=db, db_category=existing_category, category_in=payload)
-                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Category {entity_id}", details=payload)
-                        notification_data = CategoryPayload.model_validate(updated_category)
+                debugLog(MODULE_NAME, f"Processing Category CREATE for {entity_id}", details={
+                    "payload": payload.model_dump() if isinstance(payload, CategoryPayload) else payload,
+                    "incoming_updated_at": incoming_updated_at,
+                    "normalized_incoming_updated_at": normalized_incoming_updated_at
+                })
+
+                try:
+                    existing_category = crud_category.get_category(db=db, category_id=entity_id)
+                    if existing_category:  # Treat as update if ID already exists
+                        normalized_db_updated_at = normalize_datetime_for_comparison(existing_category.updatedAt)
+                        debugLog(MODULE_NAME, f"Category {entity_id} already exists, treating CREATE as UPDATE", details={
+                            "db_updated_at": existing_category.updatedAt,
+                            "normalized_db_updated_at": normalized_db_updated_at,
+                            "incoming_updated_at": incoming_updated_at,
+                            "normalized_incoming_updated_at": normalized_incoming_updated_at
+                        })
+
+                        if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                            updated_category = crud_category.update_category(db=db, db_category=existing_category, category_in=payload)
+                            infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Category {entity_id}", details=payload.model_dump())
+                            notification_data = CategoryPayload.model_validate(updated_category)
+                        else:
+                            infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for Category {entity_id}", details=payload.model_dump())
+                            notification_data = CategoryPayload.model_validate(existing_category)
+                            authoritative_data_used = True
                     else:
-                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for Category {entity_id}", details=payload)
-                        notification_data = CategoryPayload.model_validate(existing_category)
-                        authoritative_data_used = True
-                else:
-                    if isinstance(payload, CategoryPayload):
-                        new_category = crud_category.create_category(db=db, category_in=payload)
-                        infoLog(MODULE_NAME, f"Created Category {entity_id}", details=payload)
-                        notification_data = CategoryPayload.model_validate(new_category)
-                    else:
-                        error_msg = "Payload mismatch for Category CREATE"
-                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
-                        return False, error_msg
+                        if isinstance(payload, CategoryPayload):
+                            debugLog(MODULE_NAME, f"Creating new Category {entity_id}")
+                            new_category = crud_category.create_category(db=db, category_in=payload)
+                            infoLog(MODULE_NAME, f"Created Category {entity_id}", details=payload.model_dump())
+                            notification_data = CategoryPayload.model_validate(new_category)
+                        else:
+                            error_msg = "Payload mismatch for Category CREATE"
+                            errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                            return False, error_msg
+
+                except Exception as category_create_error:
+                    error_msg = f"Specific error during Category CREATE {entity_id}: {str(category_create_error)}"
+                    errorLog(MODULE_NAME, error_msg, details={
+                        "payload": payload.model_dump() if isinstance(payload, CategoryPayload) else payload,
+                        "error": str(category_create_error),
+                        "error_type": type(category_create_error).__name__
+                    })
+                    raise category_create_error  # Re-raise to be caught by outer exception handler
 
             elif operation_type == SyncOperationType.UPDATE:
                 if not isinstance(payload, CategoryPayload):
                     error_msg = "Invalid payload type for Category UPDATE"
                     errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
                     return False, error_msg
-                db_category = crud_category.get_category(db=db, category_id=entity_id)
-                if db_category:
-                    if incoming_updated_at and db_category.updatedAt and incoming_updated_at > db_category.updatedAt:
-                        updated_category = crud_category.update_category(db=db, db_category=db_category, category_in=payload)
-                        infoLog(MODULE_NAME, f"Updated Category {entity_id} (LWW win)", details=payload)
-                        notification_data = CategoryPayload.model_validate(updated_category)
+
+                debugLog(MODULE_NAME, f"Processing Category UPDATE for {entity_id}", details={
+                    "payload": payload.model_dump(),
+                    "incoming_updated_at": incoming_updated_at,
+                    "normalized_incoming_updated_at": normalized_incoming_updated_at
+                })
+
+                try:
+                    db_category = crud_category.get_category(db=db, category_id=entity_id)
+                    if db_category:
+                        normalized_db_updated_at = normalize_datetime_for_comparison(db_category.updatedAt)
+                        lww_comparison = normalized_incoming_updated_at > normalized_db_updated_at if (normalized_incoming_updated_at and normalized_db_updated_at) else "no_comparison"
+
+                        debugLog(MODULE_NAME, f"Found existing Category {entity_id}", details={
+                            "db_updated_at": db_category.updatedAt,
+                            "normalized_db_updated_at": normalized_db_updated_at,
+                            "incoming_updated_at": incoming_updated_at,
+                            "normalized_incoming_updated_at": normalized_incoming_updated_at,
+                            "lww_comparison": lww_comparison
+                        })
+
+                        if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                            debugLog(MODULE_NAME, f"Attempting Category UPDATE for {entity_id} (LWW win)")
+                            updated_category = crud_category.update_category(db=db, db_category=db_category, category_in=payload)
+                            infoLog(MODULE_NAME, f"Updated Category {entity_id} (LWW win)", details=payload.model_dump())
+                            notification_data = CategoryPayload.model_validate(updated_category)
+                        else:
+                            infoLog(MODULE_NAME, f"Skipped Category UPDATE {entity_id} (LWW loss/equal or no timestamp)", details=payload.model_dump())
+                            notification_data = CategoryPayload.model_validate(db_category)
+                            authoritative_data_used = True
                     else:
-                        infoLog(MODULE_NAME, f"Skipped Category UPDATE {entity_id} (LWW loss/equal or no timestamp)", details=payload)
-                        notification_data = CategoryPayload.model_validate(db_category)
-                        authoritative_data_used = True
-                else:
-                    new_category = crud_category.create_category(db=db, category_in=payload)
-                    infoLog(MODULE_NAME, f"Created Category {entity_id} during UPDATE (upsert)", details=payload)
-                    notification_data = CategoryPayload.model_validate(new_category)
+                        debugLog(MODULE_NAME, f"Category {entity_id} not found, creating during UPDATE (upsert)")
+                        new_category = crud_category.create_category(db=db, category_in=payload)
+                        infoLog(MODULE_NAME, f"Created Category {entity_id} during UPDATE (upsert)", details=payload.model_dump())
+                        notification_data = CategoryPayload.model_validate(new_category)
+
+                except Exception as category_update_error:
+                    error_msg = f"Specific error during Category UPDATE {entity_id}: {str(category_update_error)}"
+                    errorLog(MODULE_NAME, error_msg, details={
+                        "payload": payload.model_dump(),
+                        "error": str(category_update_error),
+                        "error_type": type(category_update_error).__name__
+                    })
+                    raise category_update_error  # Re-raise to be caught by outer exception handler
 
             elif operation_type == SyncOperationType.DELETE:
-                deleted_category = crud_category.delete_category(db=db, category_id=entity_id)
-                if deleted_category:
-                    infoLog(MODULE_NAME, f"Deleted Category {entity_id}")
-                    notification_data = DeletePayload(id=entity_id)
-                else:
-                    infoLog(MODULE_NAME, f"Category {entity_id} not found for DELETE")
-                    notification_data = DeletePayload(id=entity_id)
-                    authoritative_data_used = True
+                debugLog(MODULE_NAME, f"Processing Category DELETE for {entity_id}")
+
+                try:
+                    deleted_category = crud_category.delete_category(db=db, category_id=entity_id)
+                    if deleted_category:
+                        infoLog(MODULE_NAME, f"Deleted Category {entity_id}")
+                        notification_data = DeletePayload(id=entity_id)
+                    else:
+                        infoLog(MODULE_NAME, f"Category {entity_id} not found for DELETE")
+                        notification_data = DeletePayload(id=entity_id)
+                        authoritative_data_used = True
+
+                except Exception as category_delete_error:
+                    error_msg = f"Specific error during Category DELETE {entity_id}: {str(category_delete_error)}"
+                    errorLog(MODULE_NAME, error_msg, details={
+                        "entity_id": entity_id,
+                        "error": str(category_delete_error),
+                        "error_type": type(category_delete_error).__name__
+                    })
+                    raise category_delete_error  # Re-raise to be caught by outer exception handler
 
         elif entity_type == EntityType.CATEGORY_GROUP:
             if not isinstance(payload, (CategoryGroupPayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
