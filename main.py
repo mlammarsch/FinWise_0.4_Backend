@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from app.db.database import create_db_and_tables
 from app.routers import users, tenants
 from app.websocket import endpoints as websocket_endpoints # WebSocket-Router importieren
+from app.api.v1.endpoints import sync as sync_endpoints # Sync-API-Router importieren
 from app.utils.logger import infoLog, errorLog, debugLog # Added debugLog
 
 MODULE_NAME = "MainApp" # Changed to PascalCase for consistency with other module names in logs
@@ -57,6 +58,8 @@ app.include_router(tenants.router)
 debugLog(MODULE_NAME, "Tenants router included.", details={"prefix": tenants.router.prefix if hasattr(tenants.router, 'prefix') else 'N/A', "tags": tenants.router.tags if hasattr(tenants.router, 'tags') else 'N/A'})
 app.include_router(websocket_endpoints.router, prefix="/ws_finwise") # WebSocket-Router einbinden
 debugLog(MODULE_NAME, "WebSocket endpoints router included.", details={"prefix": "/ws_finwise", "tags": websocket_endpoints.router.tags if hasattr(websocket_endpoints.router, 'tags') else 'N/A'})
+app.include_router(sync_endpoints.router, prefix="/api/v1/sync", tags=["sync"]) # Sync-API-Router einbinden
+debugLog(MODULE_NAME, "Sync API router included.", details={"prefix": "/api/v1/sync", "tags": ["sync"]})
 
 if __name__ == "__main__":
     debugLog(MODULE_NAME, "Application starting with uvicorn (direct execution).", details={"host": "0.0.0.0", "port": 8000})

@@ -9,7 +9,8 @@ from app.websocket.connection_manager import manager
 # from app.models.user_tenant_models import User # Not directly used in this endpoint for now
 from app.websocket.schemas import (
     BackendStatusMessage, ProcessSyncEntryMessage, SyncAckMessage, SyncNackMessage,
-    RequestInitialDataMessage, InitialDataLoadMessage, ServerEventType # Import new schemas for initial data load
+    RequestInitialDataMessage, InitialDataLoadMessage, ServerEventType, # Import new schemas for initial data load
+    DataStatusRequestMessage, DataStatusResponseMessage # Import new schemas for data status
 )
 from app.services import sync_service # Import the new sync service
 from app.utils.logger import debugLog, errorLog, infoLog # Added infoLog
@@ -204,6 +205,55 @@ async def websocket_endpoint(
                             "WebSocketEndpoints",
                             f"Error processing request_initial_data for tenant {tenant_id}: {str(e_initial_data)}",
                             details={"tenant_id": tenant_id, "error": str(e_initial_data), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+
+                elif message_type == "data_status_request":
+                    try:
+                        data_status_request = DataStatusRequestMessage(**message_data)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received data_status_request for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "entity_types": data_status_request.entity_types}
+                        )
+
+                        # Process data status request using the service
+                        status_response = await sync_service.get_data_status_for_tenant(
+                            data_status_request.tenant_id,
+                            data_status_request.entity_types
+                        )
+
+                        if status_response:
+                            await manager.send_personal_json_message(status_response.model_dump(), websocket)
+                            infoLog(
+                                "WebSocketEndpoints",
+                                f"Sent data_status_response to client for tenant {tenant_id}",
+                                details={"tenant_id": tenant_id, "entity_count": len(status_response.entity_checksums)}
+                            )
+                        else:
+                            errorLog(
+                                "WebSocketEndpoints",
+                                f"Failed to get data status for tenant {tenant_id}",
+                                details={"tenant_id": tenant_id}
+                            )
+                            await manager.send_personal_json_message(
+                                {"type": "error", "message": "Failed to get data status"},
+                                websocket
+                            )
+                    except ValidationError as ve:
+                        error_detail_for_client = f"Validation error for data_status_request: {str(ve)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Validation error for data_status_request message from tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "error": ve.errors(), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+                    except Exception as e_data_status:
+                        error_detail_for_client = f"Error processing data_status_request: {str(e_data_status)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error processing data_status_request for tenant {tenant_id}: {str(e_data_status)}",
+                            details={"tenant_id": tenant_id, "error": str(e_data_status), "data": data[:200]}
                         )
                         await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
 

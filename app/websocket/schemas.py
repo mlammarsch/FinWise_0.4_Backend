@@ -166,6 +166,32 @@ class RequestInitialDataMessage(BaseModel):
     type: Literal["request_initial_data"] = "request_initial_data"
     tenant_id: str # Zur Bestätigung, obwohl schon im WebSocket-Pfad
 
+# Neue Schema-Definitionen für data_status_request und data_status_response
+class DataStatusRequestMessage(BaseModel):
+    """
+    Message sent from frontend to backend to request data status for checksum comparison.
+    """
+    type: Literal["data_status_request"] = "data_status_request"
+    tenant_id: str
+    entity_types: Optional[list[EntityType]] = None  # Wenn None, alle Entitätstypen
+
+class EntityChecksum(BaseModel):
+    """
+    Checksum information for a specific entity.
+    """
+    entity_id: str
+    checksum: str
+    last_modified: int  # Unix timestamp
+
+class DataStatusResponseMessage(BaseModel):
+    """
+    Message sent from backend to frontend with data status and checksums.
+    """
+    type: Literal["data_status_response"] = "data_status_response"
+    tenant_id: str
+    entity_checksums: Dict[str, list[EntityChecksum]]  # Key: EntityType.value, Value: List of checksums
+    last_sync_time: int
+    server_time: int
 
 # Schemas for Server-to-Client WebSocket messages
 
@@ -316,11 +342,47 @@ class InitialDataLoadMessage(BaseModel):
     class Config:
         use_enum_values = True
 
+# Erweiterte Schemas für Sync-Management
+class SyncConflictEntry(BaseModel):
+    """
+    Represents a conflict between local and server data.
+    """
+    entity_type: EntityType
+    entity_id: str
+    local_checksum: str
+    server_checksum: str
+    local_last_modified: int
+    server_last_modified: int
+
+class ConflictReportMessage(BaseModel):
+    """
+    Message sent from server to client with conflict information.
+    """
+    type: Literal["conflict_report"] = "conflict_report"
+    tenant_id: str
+    conflicts: list[SyncConflictEntry]
+    local_only: list[Dict[str, str]]  # entities that exist only locally
+    server_only: list[Dict[str, str]]  # entities that exist only on server
+
+class SyncStatusMessage(BaseModel):
+    """
+    Message sent from server to client with sync status information.
+    """
+    type: Literal["sync_status"] = "sync_status"
+    tenant_id: str
+    queue_length: int
+    last_sync_time: int
+    sync_in_progress: bool
+    failed_entries_count: int
+
 ServerToClientMessage = Union[
     DataUpdateNotificationMessage,
     BackendStatusMessage,
     SyncAckMessage,
     SyncNackMessage,
-    InitialDataLoadMessage # Hinzugefügt
+    InitialDataLoadMessage,
+    DataStatusResponseMessage,
+    ConflictReportMessage,
+    SyncStatusMessage
 ]
 # For now, we'll handle DataUpdateNotificationMessage and InitialDataLoadMessage specifically.

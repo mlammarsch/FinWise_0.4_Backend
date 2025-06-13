@@ -4,7 +4,8 @@ from fastapi import WebSocket  # Added for WebSocket type hint
 from app.websocket.schemas import (
     SyncQueueEntry, EntityType, SyncOperationType,
     AccountPayload, AccountGroupPayload, DeletePayload,
-    DataUpdateNotificationMessage, ServerEventType, InitialDataPayload
+    DataUpdateNotificationMessage, ServerEventType, InitialDataPayload,
+    DataStatusResponseMessage, EntityChecksum
 )
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
 from app.models.financial_models import TenantBase, Account, AccountGroup  # Import Account and AccountGroup models
@@ -13,6 +14,9 @@ from app.utils.logger import infoLog, errorLog, debugLog
 from app.websocket.connection_manager import manager as websocket_manager_instance  # Import the global manager
 from datetime import datetime  # Import datetime for comparison
 import sqlite3  # Import sqlite3 to catch specific operational errors
+import hashlib  # Import hashlib for checksum calculation
+import json  # Import json for serialization
+import time  # Import time for timestamps
 
 MODULE_NAME = "SyncService"
 
@@ -240,3 +244,167 @@ async def get_initial_data_for_tenant(tenant_id: str) -> tuple[Optional[InitialD
     finally:
         if db:
             db.close()
+
+
+def calculate_entity_checksum(entity_data: dict) -> str:
+    """Berechnet eine Checksumme für Entitätsdaten zur Konfliktserkennung."""
+    # Sortiere die Daten für konsistente Checksummen
+    sorted_data = json.dumps(entity_data, sort_keys=True, default=str)
+    return hashlib.md5(sorted_data.encode()).hexdigest()
+
+
+async def get_data_status_for_tenant(tenant_id: str, entity_types: Optional[list[EntityType]] = None) -> Optional[DataStatusResponseMessage]:
+    """Erstellt eine Datenstatusantwort mit Checksummen für Konfliktserkennung."""
+    debugLog(MODULE_NAME, f"Getting data status for tenant {tenant_id}", details={"entity_types": entity_types})
+
+    db: Optional[Session] = None
+    try:
+        db = get_tenant_db_session(tenant_id)
+        if db is None:
+            error_msg = f"Could not get DB session for tenant {tenant_id} during data status fetch."
+            errorLog(MODULE_NAME, error_msg)
+            return None
+
+        entity_checksums = {}
+        current_time = int(time.time())
+
+        # Standardmäßig alle Entitätstypen verarbeiten, wenn keine spezifiziert
+        if entity_types is None:
+            entity_types = [EntityType.ACCOUNT, EntityType.ACCOUNT_GROUP]
+
+        for entity_type in entity_types:
+            checksums = []
+
+            if entity_type == EntityType.ACCOUNT:
+                accounts_db = crud_account.get_accounts(db=db)
+                for account in accounts_db:
+                    account_data = {
+                        'id': account.id,
+                        'name': account.name,
+                        'description': account.description,
+                        'note': account.note,
+                        'accountType': account.accountType,
+                        'isActive': account.isActive,
+                        'isOfflineBudget': account.isOfflineBudget,
+                        'accountGroupId': account.accountGroupId,
+                        'sortOrder': account.sortOrder,
+                        'iban': account.iban,
+                        'balance': float(account.balance) if account.balance else 0.0,
+                        'creditLimit': float(account.creditLimit) if account.creditLimit else None,
+                        'offset': account.offset,
+                        'image': account.image,
+                        'updated_at': account.updatedAt.isoformat() if account.updatedAt else None
+                    }
+                    checksum = calculate_entity_checksum(account_data)
+                    last_modified = int(account.updatedAt.timestamp()) if account.updatedAt else 0
+
+                    checksums.append(EntityChecksum(
+                        entity_id=account.id,
+                        checksum=checksum,
+                        last_modified=last_modified
+                    ))
+
+            elif entity_type == EntityType.ACCOUNT_GROUP:
+                account_groups_db = crud_account_group.get_account_groups(db=db)
+                for group in account_groups_db:
+                    group_data = {
+                        'id': group.id,
+                        'name': group.name,
+                        'sortOrder': group.sortOrder,
+                        'image': group.image,
+                        'updated_at': group.updatedAt.isoformat() if group.updatedAt else None
+                    }
+                    checksum = calculate_entity_checksum(group_data)
+                    last_modified = int(group.updatedAt.timestamp()) if group.updatedAt else 0
+
+                    checksums.append(EntityChecksum(
+                        entity_id=group.id,
+                        checksum=checksum,
+                        last_modified=last_modified
+                    ))
+
+            entity_checksums[entity_type.value] = checksums
+
+        response = DataStatusResponseMessage(
+            tenant_id=tenant_id,
+            entity_checksums=entity_checksums,
+            last_sync_time=current_time,  # TODO: Implementiere echte letzte Sync-Zeit
+            server_time=current_time
+        )
+
+        infoLog(MODULE_NAME, f"Successfully created data status response for tenant {tenant_id}",
+                details={"entity_types": [et.value for et in entity_types], "total_entities": sum(len(checksums) for checksums in entity_checksums.values())})
+        return response
+
+    except sqlite3.OperationalError as oe:
+        error_msg = f"Database operational error getting data status for tenant {tenant_id}: {str(oe)}"
+        error_reason = "database_operational_error"
+        if "no such table" in str(oe).lower():
+            error_reason = "table_not_found"
+        errorLog(MODULE_NAME, error_msg, details={"tenant_id": tenant_id, "error": str(oe), "reason": error_reason})
+        return None
+    except Exception as e:
+        error_msg = f"Generic error getting data status for tenant {tenant_id}: {str(e)}"
+        errorLog(MODULE_NAME, error_msg, details={"tenant_id": tenant_id, "error": str(e)})
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+async def detect_conflicts(tenant_id: str, client_checksums: dict) -> dict:
+    """Erkennt Konflikte zwischen Client- und Server-Daten basierend auf Checksummen."""
+    debugLog(MODULE_NAME, f"Detecting conflicts for tenant {tenant_id}")
+
+    server_status = await get_data_status_for_tenant(tenant_id)
+    if not server_status:
+        errorLog(MODULE_NAME, f"Could not get server status for conflict detection for tenant {tenant_id}")
+        return {"conflicts": [], "local_only": [], "server_only": []}
+
+    conflicts = []
+    local_only = []
+    server_only = []
+
+    # Vergleiche Client- und Server-Checksummen
+    for entity_type, client_entities in client_checksums.items():
+        server_entities = server_status.entity_checksums.get(entity_type, [])
+        server_entity_map = {entity.entity_id: entity for entity in server_entities}
+        client_entity_map = {entity['entity_id']: entity for entity in client_entities}
+
+        # Finde Konflikte und nur-lokale Entitäten
+        for entity_id, client_entity in client_entity_map.items():
+            if entity_id in server_entity_map:
+                server_entity = server_entity_map[entity_id]
+                if client_entity['checksum'] != server_entity.checksum:
+                    conflicts.append({
+                        'entity_type': entity_type,
+                        'entity_id': entity_id,
+                        'local_checksum': client_entity['checksum'],
+                        'server_checksum': server_entity.checksum,
+                        'local_last_modified': client_entity.get('last_modified', 0),
+                        'server_last_modified': server_entity.last_modified
+                    })
+            else:
+                local_only.append({
+                    'entity_type': entity_type,
+                    'entity_id': entity_id
+                })
+
+        # Finde nur-Server-Entitäten
+        for entity_id, server_entity in server_entity_map.items():
+            if entity_id not in client_entity_map:
+                server_only.append({
+                    'entity_type': entity_type,
+                    'entity_id': entity_id
+                })
+
+    result = {
+        "conflicts": conflicts,
+        "local_only": local_only,
+        "server_only": server_only
+    }
+
+    infoLog(MODULE_NAME, f"Conflict detection completed for tenant {tenant_id}",
+            details={"conflicts": len(conflicts), "local_only": len(local_only), "server_only": len(server_only)})
+
+    return result
