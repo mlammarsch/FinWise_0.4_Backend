@@ -52,6 +52,45 @@ class Account(TenantBase):
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+class CategoryGroup(TenantBase):
+    __tablename__ = "category_groups"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) # Frontend sends string UUIDs
+    name = Column(String, nullable=False, index=True)
+    sortOrder = Column(Integer, nullable=False, default=0)
+    isIncomeGroup = Column(Boolean, nullable=False, default=False)
+    # Timestamps
+    createdAt = Column(DateTime, default=datetime.utcnow)
+    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationship to Categories
+    categories = relationship("Category", back_populates="category_group")
+
+class Category(TenantBase):
+    __tablename__ = "categories"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) # Frontend sends string UUIDs
+    name = Column(String, nullable=False, index=True)
+    icon = Column(String, nullable=True)
+    budgeted = Column(Numeric(10, 2), nullable=False, default=0.0)
+    activity = Column(Numeric(10, 2), nullable=False, default=0.0)
+    available = Column(Numeric(10, 2), nullable=False, default=0.0)
+    isIncomeCategory = Column(Boolean, nullable=False, default=False)
+    isHidden = Column(Boolean, nullable=False, default=False)
+    isActive = Column(Boolean, nullable=False, default=True)
+    sortOrder = Column(Integer, nullable=False, default=0)
+    isSavingsGoal = Column(Boolean, nullable=False, default=False)
+
+    categoryGroupId = Column(String, ForeignKey("category_groups.id"), nullable=True)
+    category_group = relationship("CategoryGroup", back_populates="categories")
+
+    parentCategoryId = Column(String, ForeignKey("categories.id"), nullable=True)
+    parent_category = relationship("Category", remote_side=[id], backref="subcategories")
+
+    # Timestamps
+    createdAt = Column(DateTime, default=datetime.utcnow)
+    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 # To ensure these tables are created in the tenant-specific databases,
 # this Base's metadata will need to be used when initializing the engine for that tenant.
 # For example, TenantBase.metadata.create_all(bind=tenant_engine)

@@ -3,13 +3,13 @@ from typing import Optional  # Added for Optional WebSocket
 from fastapi import WebSocket  # Added for WebSocket type hint
 from app.websocket.schemas import (
     SyncQueueEntry, EntityType, SyncOperationType,
-    AccountPayload, AccountGroupPayload, DeletePayload,
+    AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, DeletePayload,
     DataUpdateNotificationMessage, ServerEventType, InitialDataPayload,
     DataStatusResponseMessage, EntityChecksum
 )
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
-from app.models.financial_models import TenantBase, Account, AccountGroup  # Import Account and AccountGroup models
-from app.crud import crud_account, crud_account_group
+from app.models.financial_models import TenantBase, Account, AccountGroup, Category, CategoryGroup  # Import all models
+from app.crud import crud_account, crud_account_group, crud_category, crud_category_group
 from app.utils.logger import infoLog, errorLog, debugLog
 from app.websocket.connection_manager import manager as websocket_manager_instance  # Import the global manager
 from datetime import datetime  # Import datetime for comparison
@@ -48,7 +48,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
         entity_id = entry.entityId
         incoming_updated_at: Optional[datetime] = getattr(payload, 'updated_at', None) if payload else None
 
-        notification_data: Optional[AccountPayload | AccountGroupPayload | DeletePayload] = None
+        notification_data: Optional[AccountPayload | AccountGroupPayload | CategoryPayload | CategoryGroupPayload | DeletePayload] = None
         authoritative_data_used = False  # Flag to indicate if DB data was sent because incoming was old
 
         if entity_type == EntityType.ACCOUNT:
@@ -70,6 +70,8 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                         authoritative_data_used = True
                 else:
                     if isinstance(payload, AccountPayload):
+                        # Debug-Logging für accountType
+                        debugLog(MODULE_NAME, f"Creating Account {entity_id} with accountType: {payload.accountType} (type: {type(payload.accountType)})")
                         new_account = crud_account.create_account(db=db, account_in=payload)
                         infoLog(MODULE_NAME, f"Created Account {entity_id}", details=payload)
                         notification_data = AccountPayload.model_validate(new_account)
@@ -164,6 +166,120 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     infoLog(MODULE_NAME, f"AccountGroup {entity_id} not found for DELETE")
                     notification_data = DeletePayload(id=entity_id)
                     authoritative_data_used = True
+
+        elif entity_type == EntityType.CATEGORY:
+            if not isinstance(payload, (CategoryPayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
+                error_msg = "Invalid payload type for Category operation"
+                errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                return False, error_msg
+
+            if operation_type == SyncOperationType.CREATE:
+                existing_category = crud_category.get_category(db=db, category_id=entity_id)
+                if existing_category:  # Treat as update if ID already exists
+                    if incoming_updated_at and existing_category.updatedAt and incoming_updated_at > existing_category.updatedAt:
+                        updated_category = crud_category.update_category(db=db, db_category=existing_category, category_in=payload)
+                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Category {entity_id}", details=payload)
+                        notification_data = CategoryPayload.model_validate(updated_category)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for Category {entity_id}", details=payload)
+                        notification_data = CategoryPayload.model_validate(existing_category)
+                        authoritative_data_used = True
+                else:
+                    if isinstance(payload, CategoryPayload):
+                        new_category = crud_category.create_category(db=db, category_in=payload)
+                        infoLog(MODULE_NAME, f"Created Category {entity_id}", details=payload)
+                        notification_data = CategoryPayload.model_validate(new_category)
+                    else:
+                        error_msg = "Payload mismatch for Category CREATE"
+                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                        return False, error_msg
+
+            elif operation_type == SyncOperationType.UPDATE:
+                if not isinstance(payload, CategoryPayload):
+                    error_msg = "Invalid payload type for Category UPDATE"
+                    errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                    return False, error_msg
+                db_category = crud_category.get_category(db=db, category_id=entity_id)
+                if db_category:
+                    if incoming_updated_at and db_category.updatedAt and incoming_updated_at > db_category.updatedAt:
+                        updated_category = crud_category.update_category(db=db, db_category=db_category, category_in=payload)
+                        infoLog(MODULE_NAME, f"Updated Category {entity_id} (LWW win)", details=payload)
+                        notification_data = CategoryPayload.model_validate(updated_category)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped Category UPDATE {entity_id} (LWW loss/equal or no timestamp)", details=payload)
+                        notification_data = CategoryPayload.model_validate(db_category)
+                        authoritative_data_used = True
+                else:
+                    new_category = crud_category.create_category(db=db, category_in=payload)
+                    infoLog(MODULE_NAME, f"Created Category {entity_id} during UPDATE (upsert)", details=payload)
+                    notification_data = CategoryPayload.model_validate(new_category)
+
+            elif operation_type == SyncOperationType.DELETE:
+                deleted_category = crud_category.delete_category(db=db, category_id=entity_id)
+                if deleted_category:
+                    infoLog(MODULE_NAME, f"Deleted Category {entity_id}")
+                    notification_data = DeletePayload(id=entity_id)
+                else:
+                    infoLog(MODULE_NAME, f"Category {entity_id} not found for DELETE")
+                    notification_data = DeletePayload(id=entity_id)
+                    authoritative_data_used = True
+
+        elif entity_type == EntityType.CATEGORY_GROUP:
+            if not isinstance(payload, (CategoryGroupPayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
+                error_msg = "Invalid payload type for CategoryGroup operation"
+                errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                return False, error_msg
+
+            if operation_type == SyncOperationType.CREATE:
+                existing_group = crud_category_group.get_category_group(db=db, category_group_id=entity_id)
+                if existing_group:  # Treat as update
+                    if incoming_updated_at and existing_group.updatedAt and incoming_updated_at > existing_group.updatedAt:
+                        updated_group = crud_category_group.update_category_group(db=db, db_category_group=existing_group, category_group_in=payload)
+                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for CategoryGroup {entity_id}", details=payload)
+                        notification_data = CategoryGroupPayload.model_validate(updated_group)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for CategoryGroup {entity_id}", details=payload)
+                        notification_data = CategoryGroupPayload.model_validate(existing_group)
+                        authoritative_data_used = True
+                else:
+                    if isinstance(payload, CategoryGroupPayload):
+                        new_group = crud_category_group.create_category_group(db=db, category_group_in=payload)
+                        infoLog(MODULE_NAME, f"Created CategoryGroup {entity_id}", details=payload)
+                        notification_data = CategoryGroupPayload.model_validate(new_group)
+                    else:
+                        error_msg = "Payload mismatch for CategoryGroup CREATE"
+                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                        return False, error_msg
+
+            elif operation_type == SyncOperationType.UPDATE:
+                if not isinstance(payload, CategoryGroupPayload):
+                    error_msg = "Invalid payload type for CategoryGroup UPDATE"
+                    errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                    return False, error_msg
+                db_category_group = crud_category_group.get_category_group(db=db, category_group_id=entity_id)
+                if db_category_group:
+                    if incoming_updated_at and db_category_group.updatedAt and incoming_updated_at > db_category_group.updatedAt:
+                        updated_group = crud_category_group.update_category_group(db=db, db_category_group=db_category_group, category_group_in=payload)
+                        infoLog(MODULE_NAME, f"Updated CategoryGroup {entity_id} (LWW win)", details=payload)
+                        notification_data = CategoryGroupPayload.model_validate(updated_group)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CategoryGroup UPDATE {entity_id} (LWW loss/equal or no timestamp)", details=payload)
+                        notification_data = CategoryGroupPayload.model_validate(db_category_group)
+                        authoritative_data_used = True
+                else:
+                    new_group = crud_category_group.create_category_group(db=db, category_group_in=payload)
+                    infoLog(MODULE_NAME, f"Created CategoryGroup {entity_id} during UPDATE (upsert)", details=payload)
+                    notification_data = CategoryGroupPayload.model_validate(new_group)
+
+            elif operation_type == SyncOperationType.DELETE:
+                deleted_group = crud_category_group.delete_category_group(db=db, category_group_id=entity_id)
+                if deleted_group:
+                    infoLog(MODULE_NAME, f"Deleted CategoryGroup {entity_id}")
+                    notification_data = DeletePayload(id=entity_id)
+                else:
+                    infoLog(MODULE_NAME, f"CategoryGroup {entity_id} not found for DELETE")
+                    notification_data = DeletePayload(id=entity_id)
+                    authoritative_data_used = True
         else:
             error_msg = f"Unknown entity type: {entity_type}"
             errorLog(MODULE_NAME, error_msg, details={"entry_id": entry.id})
@@ -219,15 +335,21 @@ async def get_initial_data_for_tenant(tenant_id: str) -> tuple[Optional[InitialD
 
         accounts_db = crud_account.get_accounts(db=db)
         account_groups_db = crud_account_group.get_account_groups(db=db)
+        categories_db = crud_category.get_categories(db=db)
+        category_groups_db = crud_category_group.get_category_groups(db=db)
 
         accounts_payload = [AccountPayload.model_validate(acc) for acc in accounts_db]
         account_groups_payload = [AccountGroupPayload.model_validate(ag) for ag in account_groups_db]
+        categories_payload = [CategoryPayload.model_validate(cat) for cat in categories_db]
+        category_groups_payload = [CategoryGroupPayload.model_validate(cg) for cg in category_groups_db]
 
         initial_data = InitialDataPayload(
             accounts=accounts_payload,
-            account_groups=account_groups_payload
+            account_groups=account_groups_payload,
+            categories=categories_payload,
+            category_groups=category_groups_payload
         )
-        infoLog(MODULE_NAME, f"Successfully retrieved initial data for tenant {tenant_id}. Accounts: {len(accounts_payload)}, AccountGroups: {len(account_groups_payload)}")
+        infoLog(MODULE_NAME, f"Successfully retrieved initial data for tenant {tenant_id}. Accounts: {len(accounts_payload)}, AccountGroups: {len(account_groups_payload)}, Categories: {len(categories_payload)}, CategoryGroups: {len(category_groups_payload)}")
         return initial_data, None
 
     except sqlite3.OperationalError as oe:
@@ -270,7 +392,7 @@ async def get_data_status_for_tenant(tenant_id: str, entity_types: Optional[list
 
         # Standardmäßig alle Entitätstypen verarbeiten, wenn keine spezifiziert
         if entity_types is None:
-            entity_types = [EntityType.ACCOUNT, EntityType.ACCOUNT_GROUP]
+            entity_types = [EntityType.ACCOUNT, EntityType.ACCOUNT_GROUP, EntityType.CATEGORY, EntityType.CATEGORY_GROUP]
 
         for entity_type in entity_types:
             checksums = []
@@ -312,6 +434,53 @@ async def get_data_status_for_tenant(tenant_id: str, entity_types: Optional[list
                         'name': group.name,
                         'sortOrder': group.sortOrder,
                         'image': group.image,
+                        'updated_at': group.updatedAt.isoformat() if group.updatedAt else None
+                    }
+                    checksum = calculate_entity_checksum(group_data)
+                    last_modified = int(group.updatedAt.timestamp()) if group.updatedAt else 0
+
+                    checksums.append(EntityChecksum(
+                        entity_id=group.id,
+                        checksum=checksum,
+                        last_modified=last_modified
+                    ))
+
+            elif entity_type == EntityType.CATEGORY:
+                categories_db = crud_category.get_categories(db=db)
+                for category in categories_db:
+                    category_data = {
+                        'id': category.id,
+                        'name': category.name,
+                        'icon': category.icon,
+                        'budgeted': float(category.budgeted) if category.budgeted else 0.0,
+                        'activity': float(category.activity) if category.activity else 0.0,
+                        'available': float(category.available) if category.available else 0.0,
+                        'isIncomeCategory': category.isIncomeCategory,
+                        'isHidden': category.isHidden,
+                        'isActive': category.isActive,
+                        'sortOrder': category.sortOrder,
+                        'categoryGroupId': category.categoryGroupId,
+                        'parentCategoryId': category.parentCategoryId,
+                        'isSavingsGoal': category.isSavingsGoal,
+                        'updated_at': category.updatedAt.isoformat() if category.updatedAt else None
+                    }
+                    checksum = calculate_entity_checksum(category_data)
+                    last_modified = int(category.updatedAt.timestamp()) if category.updatedAt else 0
+
+                    checksums.append(EntityChecksum(
+                        entity_id=category.id,
+                        checksum=checksum,
+                        last_modified=last_modified
+                    ))
+
+            elif entity_type == EntityType.CATEGORY_GROUP:
+                category_groups_db = crud_category_group.get_category_groups(db=db)
+                for group in category_groups_db:
+                    group_data = {
+                        'id': group.id,
+                        'name': group.name,
+                        'sortOrder': group.sortOrder,
+                        'isIncomeGroup': group.isIncomeGroup,
                         'updated_at': group.updatedAt.isoformat() if group.updatedAt else None
                     }
                     checksum = calculate_entity_checksum(group_data)

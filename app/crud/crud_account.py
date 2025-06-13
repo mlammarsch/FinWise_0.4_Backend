@@ -25,12 +25,15 @@ def create_account(  # Changed to sync, WebSocket logic moved to service layer
     account_in: AccountPayload,
 ) -> Account:
     """Creates a new Account."""
+    # Robuste Behandlung von accountType (kann String oder Enum sein)
+    account_type_value = account_in.accountType.value if hasattr(account_in.accountType, 'value') else account_in.accountType
+
     db_account = Account(
         id=account_in.id,
         name=account_in.name,
         description=account_in.description,
         note=account_in.note,
-        accountType=account_in.accountType.value,  # Use enum value
+        accountType=account_type_value,
         isActive=account_in.isActive,
         isOfflineBudget=account_in.isOfflineBudget,
         accountGroupId=account_in.accountGroupId,
@@ -71,10 +74,13 @@ def update_account(  # Changed to sync
     account_in: AccountPayload,
 ) -> Account:
     """Updates an existing Account."""
+    # Robuste Behandlung von accountType (kann String oder Enum sein)
+    account_type_value = account_in.accountType.value if hasattr(account_in.accountType, 'value') else account_in.accountType
+
     db_account.name = account_in.name
     db_account.description = account_in.description
     db_account.note = account_in.note
-    db_account.accountType = account_in.accountType.value  # Use enum value
+    db_account.accountType = account_type_value
     db_account.isActive = account_in.isActive
     db_account.isOfflineBudget = account_in.isOfflineBudget
     db_account.accountGroupId = account_in.accountGroupId

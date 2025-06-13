@@ -53,6 +53,8 @@ class ConnectionStatusResponseMessage(BaseModel):
 class EntityType(Enum):
     ACCOUNT = "Account"
     ACCOUNT_GROUP = "AccountGroup"
+    CATEGORY = "Category"
+    CATEGORY_GROUP = "CategoryGroup"
 
 class SyncOperationType(Enum):
     CREATE = "create"
@@ -84,6 +86,24 @@ class AccountPayload(BaseModel):
     image: Optional[str] = None
     updated_at: Optional[datetime.datetime] = None
 
+    @validator('accountType', pre=True, always=True)
+    def ensure_account_type_is_enum(cls, v):
+        if isinstance(v, AccountType):
+            logger.debug(f"Validator ensure_account_type_is_enum returning existing enum: {type(v)} - {v}")
+            return v
+        if isinstance(v, str):
+            # Case-insensitive matching
+            for member in AccountType:
+                if member.value.lower() == v.lower():
+                    logger.debug(f"Validator ensure_account_type_is_enum returning new enum from string: {type(member)} - {member}")
+                    return member # Gibt das Enum-Mitglied zurück
+            # If no match, raise error
+            expected_values = [e.value for e in AccountType]
+            raise ValueError(f"Ungültiger Wert '{v}' für AccountType. Erwartet einen von (case-insensitive): {expected_values}")
+        if v is None:
+            return AccountType.CHECKING  # Default value
+        raise TypeError(f"Ungültiger Typ für AccountType: {type(v)}. Erwartet str oder AccountType.")
+
     class Config:
         use_enum_values = True # Enums als ihre Werte serialisieren
         from_attributes = True
@@ -99,12 +119,43 @@ class AccountGroupPayload(BaseModel):
         use_enum_values = True # Enum-Objekte intern verwenden -> Geändert für Konsistenz und Zukunftssicherheit
         from_attributes = True
 
+class CategoryPayload(BaseModel):
+    id: str # UUID as string from frontend
+    name: str
+    icon: Optional[str] = None
+    budgeted: float
+    activity: float
+    available: float
+    isIncomeCategory: bool
+    isHidden: bool
+    isActive: bool
+    sortOrder: int
+    categoryGroupId: Optional[str] = None
+    parentCategoryId: Optional[str] = None
+    isSavingsGoal: bool = False
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
+
+class CategoryGroupPayload(BaseModel):
+    id: str # UUID as string from frontend
+    name: str
+    sortOrder: int
+    isIncomeGroup: bool
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
+
 # For DELETE operation, payload might just contain the ID or be null
 class DeletePayload(BaseModel):
     id: str
 
 # Union type for the payload based on entityType and operationType
-SyncEntryDataPayload = Union[AccountPayload, AccountGroupPayload, DeletePayload, None]
+SyncEntryDataPayload = Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, DeletePayload, None]
 
 class SyncQueueEntry(BaseModel):
     id: str # UUID of the queue entry itself
@@ -179,6 +230,16 @@ class SyncQueueEntry(BaseModel):
                     if isinstance(v, dict):
                         return AccountGroupPayload(**v)
                     raise ValueError("Payload must be AccountGroupPayload for AccountGroup entity type")
+            elif entity_type == EntityType.CATEGORY:
+                if not isinstance(v, CategoryPayload):
+                    if isinstance(v, dict):
+                        return CategoryPayload(**v)
+                    raise ValueError("Payload must be CategoryPayload for Category entity type")
+            elif entity_type == EntityType.CATEGORY_GROUP:
+                if not isinstance(v, CategoryGroupPayload):
+                    if isinstance(v, dict):
+                        return CategoryGroupPayload(**v)
+                    raise ValueError("Payload must be CategoryGroupPayload for CategoryGroup entity type")
         return v
 
     class Config:
@@ -235,9 +296,9 @@ class ServerEventType(Enum):
 
 
 # The 'data' field for a DATA_UPDATE notification message.
-# It can be a full Account or AccountGroup payload for create/update operations,
+# It can be a full Account, AccountGroup, Category, or CategoryGroup payload for create/update operations,
 # or a DeletePayload (containing just the ID) for delete operations.
-NotificationDataPayload = Union[AccountPayload, AccountGroupPayload, DeletePayload]
+NotificationDataPayload = Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, DeletePayload]
 
 
 class DataUpdateNotificationMessage(BaseModel):
@@ -313,6 +374,20 @@ class DataUpdateNotificationMessage(BaseModel):
                     raise ValueError(
                         f"For AccountGroup entity with {op_type.value} operation, 'data' must be AccountGroupPayload. Got: {type(v)}"
                     )
+            elif entity_type == EntityType.CATEGORY:
+                if not isinstance(v, CategoryPayload):
+                    if isinstance(v, dict):
+                        return CategoryPayload(**v)
+                    raise ValueError(
+                        f"For Category entity with {op_type.value} operation, 'data' must be CategoryPayload. Got: {type(v)}"
+                    )
+            elif entity_type == EntityType.CATEGORY_GROUP:
+                if not isinstance(v, CategoryGroupPayload):
+                    if isinstance(v, dict):
+                        return CategoryGroupPayload(**v)
+                    raise ValueError(
+                        f"For CategoryGroup entity with {op_type.value} operation, 'data' must be CategoryGroupPayload. Got: {type(v)}"
+                    )
             else:
                 # This case should ideally not be reached if EntityType is exhaustive for operations
                 raise ValueError(f"Unsupported entity_type '{entity_type}' for CREATE/UPDATE operation.")
@@ -360,6 +435,8 @@ class SyncNackMessage(BaseModel):
 class InitialDataPayload(BaseModel):
     accounts: list[AccountPayload] = Field(default_factory=list)
     account_groups: list[AccountGroupPayload] = Field(default_factory=list)
+    categories: list[CategoryPayload] = Field(default_factory=list)
+    category_groups: list[CategoryGroupPayload] = Field(default_factory=list)
 
 class InitialDataLoadMessage(BaseModel):
     """
