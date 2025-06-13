@@ -17,7 +17,37 @@ class BackendStatusMessage(BaseModel):
     Represents a message indicating the backend's status.
     """
     type: Literal["status"] = "status"
-    status: str  # e.g., "online", "maintenance"
+    status: str  # e.g., "online", "maintenance", "startup", "shutdown"
+
+class PingMessage(BaseModel):
+    """
+    Ping message sent from client to server for connection health check.
+    """
+    type: Literal["ping"] = "ping"
+    timestamp: Optional[int] = None
+
+class PongMessage(BaseModel):
+    """
+    Pong response message sent from server to client.
+    """
+    type: Literal["pong"] = "pong"
+    timestamp: Optional[int] = None
+
+class ConnectionStatusRequestMessage(BaseModel):
+    """
+    Request for connection status information.
+    """
+    type: Literal["connection_status_request"] = "connection_status_request"
+
+class ConnectionStatusResponseMessage(BaseModel):
+    """
+    Response with connection status information.
+    """
+    type: Literal["connection_status_response"] = "connection_status_response"
+    tenant_id: str
+    backend_status: str
+    connection_healthy: bool
+    stats: Dict[str, Any]
 
 # Enum definitions based on frontend types
 class EntityType(Enum):
@@ -383,6 +413,16 @@ ServerToClientMessage = Union[
     InitialDataLoadMessage,
     DataStatusResponseMessage,
     ConflictReportMessage,
-    SyncStatusMessage
+    SyncStatusMessage,
+    PongMessage,
+    ConnectionStatusResponseMessage
+]
+
+ClientToServerMessage = Union[
+    ProcessSyncEntryMessage,
+    RequestInitialDataMessage,
+    DataStatusRequestMessage,
+    PingMessage,
+    ConnectionStatusRequestMessage
 ]
 # For now, we'll handle DataUpdateNotificationMessage and InitialDataLoadMessage specifically.

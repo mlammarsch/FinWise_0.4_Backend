@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.orm import Session
 import json
+import asyncio
 from pydantic import ValidationError
 from fastapi.encoders import jsonable_encoder
 
@@ -13,7 +14,7 @@ from app.websocket.schemas import (
     DataStatusRequestMessage, DataStatusResponseMessage # Import new schemas for data status
 )
 from app.services import sync_service # Import the new sync service
-from app.utils.logger import debugLog, errorLog, infoLog # Added infoLog
+from app.utils.logger import debugLog, errorLog, infoLog, warnLog # Added warnLog
 
 router = APIRouter()
 
@@ -41,7 +42,30 @@ async def websocket_endpoint(
         )
 
         while True:
-            data = await websocket.receive_text()
+            try:
+                # Verwende receive() anstatt receive_text() um verschiedene Nachrichtentypen zu handhaben
+                message = await websocket.receive()
+
+                # Handle verschiedene WebSocket-Nachrichtentypen
+                if message["type"] == "websocket.disconnect":
+                    break
+                elif message["type"] == "websocket.receive":
+                    if "text" in message:
+                        data = message["text"]
+                    elif "bytes" in message:
+                        # Für Ping/Pong-Nachrichten - diese werden automatisch von FastAPI gehandhabt
+                        continue
+                    else:
+                        continue
+                else:
+                    continue
+            except Exception as receive_error:
+                errorLog(
+                    "WebSocketEndpoints",
+                    f"Fehler beim Empfangen von WebSocket-Nachricht für Tenant {tenant_id}",
+                    details={"tenant_id": tenant_id, "error": str(receive_error)}
+                )
+                break
             debugLog(
                 "WebSocketEndpoints",
                 f"Received text data from client for tenant {tenant_id}",
@@ -257,6 +281,46 @@ async def websocket_endpoint(
                         )
                         await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
 
+                elif message_type == "ping":
+                    # Handle explizite Ping-Nachrichten vom Client
+                    try:
+                        debugLog(
+                            "WebSocketEndpoints",
+                            f"Received ping from tenant {tenant_id}",
+                            details={"tenant_id": tenant_id}
+                        )
+                        await manager.send_personal_json_message({"type": "pong", "timestamp": message_data.get("timestamp")}, websocket)
+                    except Exception as ping_error:
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Fehler beim Verarbeiten von Ping für Tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "error": str(ping_error)}
+                        )
+
+                elif message_type == "connection_status_request":
+                    # Handle Verbindungsstatus-Anfragen
+                    try:
+                        connection_stats = await manager.get_connection_stats()
+                        status_response = {
+                            "type": "connection_status_response",
+                            "tenant_id": tenant_id,
+                            "backend_status": "online",
+                            "connection_healthy": manager.connection_health.get(websocket, True),
+                            "stats": connection_stats
+                        }
+                        await manager.send_personal_json_message(status_response, websocket)
+                        debugLog(
+                            "WebSocketEndpoints",
+                            f"Sent connection status to tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "stats": connection_stats}
+                        )
+                    except Exception as status_error:
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Fehler beim Senden des Verbindungsstatus für Tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "error": str(status_error)}
+                        )
+
                 elif message_type: # Handle other known message types if any
                     debugLog(
                         "WebSocketEndpoints",
@@ -339,6 +403,23 @@ async def broadcast_backend_status(status: str):
         f"Successfully initiated broadcast of backend status: {status}",
         details={"status": status}
     )
+
+async def broadcast_backend_startup():
+    """
+    Sendet eine Startup-Nachricht an alle verbundenen Clients.
+    Diese Funktion wird beim Backend-Start aufgerufen.
+    """
+    infoLog(
+        "WebSocketEndpoints",
+        "Broadcasting backend startup notification to all clients"
+    )
+    await manager.broadcast_backend_startup()
+
+async def get_websocket_health_status() -> dict:
+    """
+    Gibt den aktuellen Gesundheitsstatus aller WebSocket-Verbindungen zurück.
+    """
+    return await manager.get_connection_stats()
 
 
 # Zukünftige Erweiterung für Datenänderungsbenachrichtigungen

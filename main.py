@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
 
 from app.db.database import create_db_and_tables
 from app.routers import users, tenants
 from app.websocket import endpoints as websocket_endpoints # WebSocket-Router importieren
 from app.api.v1.endpoints import sync as sync_endpoints # Sync-API-Router importieren
+from app.api.v1.endpoints import websocket_management # WebSocket-Management-API importieren
 from app.utils.logger import infoLog, errorLog, debugLog # Added debugLog
 
 MODULE_NAME = "MainApp" # Changed to PascalCase for consistency with other module names in logs
@@ -19,10 +21,41 @@ async def lifespan(app: FastAPI):
         create_db_and_tables()
         infoLog(MODULE_NAME, "Database and tables creation process completed.")
         debugLog(MODULE_NAME, "Successfully called create_db_and_tables.")
+
+        # Backend-Start-Broadcasting nach erfolgreicher Initialisierung
+        try:
+            # Kurze Verzögerung um sicherzustellen, dass alle Services bereit sind
+            await asyncio.sleep(1)
+            await websocket_endpoints.broadcast_backend_startup()
+            infoLog(MODULE_NAME, "Backend startup broadcast completed.")
+        except Exception as broadcast_error:
+            # Fehler beim Broadcasting sollten den Start nicht verhindern
+            errorLog(
+                MODULE_NAME,
+                "Error during backend startup broadcast - continuing with startup",
+                details={"error": str(broadcast_error), "error_type": type(broadcast_error).__name__}
+            )
+
     except Exception as e:
         errorLog(MODULE_NAME, "Error during database and table creation.", details={"error": str(e), "error_type": type(e).__name__})
+
     yield
+
+    # Shutdown-Sequenz
     debugLog(MODULE_NAME, "Lifespan context manager exiting.")
+    try:
+        # Sende Shutdown-Nachricht an alle verbundenen Clients
+        await websocket_endpoints.broadcast_backend_status("shutdown")
+        infoLog(MODULE_NAME, "Backend shutdown broadcast completed.")
+        # Kurze Verzögerung um Clients Zeit zu geben die Nachricht zu verarbeiten
+        await asyncio.sleep(0.5)
+    except Exception as shutdown_error:
+        errorLog(
+            MODULE_NAME,
+            "Error during backend shutdown broadcast",
+            details={"error": str(shutdown_error), "error_type": type(shutdown_error).__name__}
+        )
+
     infoLog(MODULE_NAME, "Application shutting down.")
 
 app = FastAPI(
@@ -60,6 +93,8 @@ app.include_router(websocket_endpoints.router, prefix="/ws_finwise") # WebSocket
 debugLog(MODULE_NAME, "WebSocket endpoints router included.", details={"prefix": "/ws_finwise", "tags": websocket_endpoints.router.tags if hasattr(websocket_endpoints.router, 'tags') else 'N/A'})
 app.include_router(sync_endpoints.router, prefix="/api/v1/sync", tags=["sync"]) # Sync-API-Router einbinden
 debugLog(MODULE_NAME, "Sync API router included.", details={"prefix": "/api/v1/sync", "tags": ["sync"]})
+app.include_router(websocket_management.router, prefix="/api/v1/websocket", tags=["websocket-management"]) # WebSocket-Management-API einbinden
+debugLog(MODULE_NAME, "WebSocket Management API router included.", details={"prefix": "/api/v1/websocket", "tags": ["websocket-management"]})
 
 if __name__ == "__main__":
     debugLog(MODULE_NAME, "Application starting with uvicorn (direct execution).", details={"host": "0.0.0.0", "port": 8000})
