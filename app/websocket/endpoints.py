@@ -263,15 +263,23 @@ async def websocket_endpoint(
                         f"Received unhandled message type '{message_type}' from tenant {tenant_id}",
                         details={"tenant_id": tenant_id, "data": data[:200]}
                     )
-                    # Echo back for unknown types for now, or handle them
-                    await manager.send_personal_message(f"Unbekannter Nachrichtentyp empfangen: {message_type}", websocket)
+                    # Send JSON error message instead of plain text
+                    await manager.send_personal_json_message({
+                        "type": "error",
+                        "message": f"Unbekannter Nachrichtentyp empfangen: {message_type}",
+                        "original_type": message_type
+                    }, websocket)
                 else: # No type field or unknown structure
                     debugLog(
                         "WebSocketEndpoints",
                         f"Received message without 'type' field or unknown structure from tenant {tenant_id}",
                         details={"tenant_id": tenant_id, "data": data[:200]}
                     )
-                    await manager.send_personal_message(f"Nachricht ohne Typfeld empfangen: {data[:50]}...", websocket)
+                    await manager.send_personal_json_message({
+                        "type": "error",
+                        "message": f"Nachricht ohne Typfeld empfangen: {data[:50]}...",
+                        "original_data": data[:100]
+                    }, websocket)
 
             except json.JSONDecodeError:
                 errorLog(
