@@ -28,7 +28,7 @@ def create_transaction(
         date=transaction_in.date,
         valueDate=transaction_in.valueDate,
         amount=transaction_in.amount,
-        description=transaction_in.description,
+        description=transaction_in.description or "",  # Provide default empty string if None
         note=transaction_in.note,
         tagIds=transaction_in.tagIds,
         type=transaction_in.type,
@@ -72,7 +72,7 @@ def update_transaction(
     db_transaction.date = transaction_in.date
     db_transaction.valueDate = transaction_in.valueDate
     db_transaction.amount = transaction_in.amount
-    db_transaction.description = transaction_in.description
+    db_transaction.description = transaction_in.description or ""  # Provide default empty string if None
     db_transaction.note = transaction_in.note
     db_transaction.tagIds = transaction_in.tagIds
     db_transaction.type = transaction_in.type

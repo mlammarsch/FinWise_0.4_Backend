@@ -237,7 +237,7 @@ class TransactionPayload(BaseModel):
     date: str # ISO 8601 date string
     valueDate: str # ISO 8601 date string
     amount: float
-    description: str
+    description: Optional[str] = None  # Made optional to match frontend behavior
     note: Optional[str] = None
     tagIds: list[str] = Field(default_factory=list) # Array of tag IDs
     type: str # TransactionType enum: 'EXPENSE', 'INCOME', 'ACCOUNTTRANSFER', 'CATEGORYTRANSFER', 'RECONCILE'
@@ -250,6 +250,7 @@ class TransactionPayload(BaseModel):
     reconciled: Optional[bool] = False
     toCategoryId: Optional[str] = None
     payee: Optional[str] = None
+    recipientId: Optional[str] = None  # Added missing field from frontend
     updated_at: Optional[datetime.datetime] = None
 
     class Config:
