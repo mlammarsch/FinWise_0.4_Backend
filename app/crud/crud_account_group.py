@@ -98,8 +98,10 @@ def delete_account_group(  # Changed to sync
         return db_account_group  # Return the object that was deleted (now detached from session)
     return None
 
-# Potentially a function to get AccountGroups modified since a certain timestamp,
-# similar to what's in crud_account.py, could be added here if needed for sync later.
-# from datetime import datetime # Would be needed if uncommenting
-# def get_account_groups_modified_since(db: Session, *, timestamp: datetime) -> List[AccountGroup]:
-#     return db.query(AccountGroup).filter(AccountGroup.updatedAt >= timestamp).all()
+def get_account_groups_modified_since(
+    db: Session, *, timestamp: datetime
+) -> List[AccountGroup]:
+    """Retrieves all account groups that were created or updated since the given timestamp."""
+    # This function might be useful for a full sync later, but not directly for processing individual queue entries.
+    # For now, it's adapted to the new model structure.
+    return db.query(AccountGroup).filter(AccountGroup.updatedAt >= timestamp).all()

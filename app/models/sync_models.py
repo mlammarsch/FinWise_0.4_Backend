@@ -22,7 +22,7 @@ class SyncLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     processed_at = Column(DateTime, nullable=True)
     retry_count = Column(Integer, default=0)
-    metadata = Column(JSON, nullable=True)  # Zusätzliche Metadaten als JSON
+    sync_metadata = Column(JSON, nullable=True)  # Zusätzliche Metadaten als JSON
 
 class SyncConflict(Base):
     """

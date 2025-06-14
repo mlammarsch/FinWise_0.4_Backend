@@ -96,6 +96,8 @@ class Recipient(TenantBase):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False, index=True)
+    defaultCategoryId = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

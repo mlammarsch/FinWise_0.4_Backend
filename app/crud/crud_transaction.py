@@ -94,14 +94,23 @@ def update_transaction(
     return db_transaction
 
 
-def delete_transaction(db: Session, *, transaction_id: str) -> bool:
+def delete_transaction(db: Session, *, transaction_id: str) -> Optional[Transaction]:
     """Deletes a Transaction by ID."""
     db_transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if db_transaction:
         db.delete(db_transaction)
         db.commit()
         infoLog(MODULE_NAME, f"Deleted Transaction {transaction_id}")
-        return True
+        return db_transaction
     else:
         errorLog(MODULE_NAME, f"Transaction {transaction_id} not found for deletion")
-        return False
+        return None
+
+
+def get_transactions_modified_since(
+    db: Session, *, timestamp: datetime
+) -> List[Transaction]:
+    """Retrieves all transactions that were created or updated since the given timestamp."""
+    # This function might be useful for a full sync later, but not directly for processing individual queue entries.
+    # For now, it's adapted to the new model structure.
+    return db.query(Transaction).filter(Transaction.updatedAt >= timestamp).all()

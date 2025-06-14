@@ -19,7 +19,7 @@ def create_sync_log(
     status: str = "pending",
     error_message: Optional[str] = None,
     payload_checksum: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    sync_metadata: Optional[Dict[str, Any]] = None
 ) -> SyncLog:
     """Erstellt einen neuen Sync-Log-Eintrag."""
     sync_log = SyncLog(
@@ -32,7 +32,7 @@ def create_sync_log(
         status=status,
         error_message=error_message,
         payload_checksum=payload_checksum,
-        metadata=metadata
+        sync_metadata=sync_metadata
     )
 
     try:

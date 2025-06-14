@@ -24,7 +24,7 @@ class User(UserBase):
     updatedAt: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Schema für Benutzerdaten, die vom Frontend während des Syncs gesendet werden (enthält UUID, optional Passworthash)
 class UserSyncPayload(UserBase):
@@ -46,7 +46,7 @@ class Tenant(TenantBase):
     updatedAt: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # AccountGroup Schemas
 class AccountGroupBase(BaseModel):
@@ -64,7 +64,7 @@ class AccountGroupSchema(AccountGroupBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -92,4 +92,4 @@ class AccountSchema(AccountBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True

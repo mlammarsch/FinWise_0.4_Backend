@@ -44,7 +44,7 @@ def create_automation_rule(  # Changed to sync, WebSocket logic moved to service
     return db_automation_rule
 
 
-def get_automation_rule(db: Session, automation_rule_id: str) -> Optional[AutomationRule]:
+def get_automation_rule(db: Session, *, automation_rule_id: str) -> Optional[AutomationRule]:
     """Retrieves an AutomationRule by ID."""
     return db.query(AutomationRule).filter(AutomationRule.id == automation_rule_id).first()
 
@@ -56,29 +56,61 @@ def get_automation_rules(
     return db.query(AutomationRule).offset(skip).limit(limit).all()
 
 
-def update_automation_rule(
-    db: Session, *, db_obj: AutomationRule, obj_in: AutomationRulePayload
+def update_automation_rule(  # Changed to sync
+    db: Session,
+    *,
+    db_automation_rule: AutomationRule,
+    automation_rule_in: AutomationRulePayload,
 ) -> AutomationRule:
     """Updates an existing AutomationRule."""
-    # Update fields from the payload
-    db_obj.name = obj_in.name
-    db_obj.description = obj_in.description
-    db_obj.stage = obj_in.stage
-    db_obj.conditions = obj_in.conditions
-    db_obj.actions = obj_in.actions
-    db_obj.priority = obj_in.priority
-    db_obj.isActive = obj_in.isActive
-    db_obj.updatedAt = obj_in.updated_at if obj_in.updated_at else datetime.utcnow()
+    db_automation_rule.name = automation_rule_in.name
+    db_automation_rule.description = automation_rule_in.description
+    db_automation_rule.stage = automation_rule_in.stage
+    db_automation_rule.conditions = automation_rule_in.conditions
+    db_automation_rule.actions = automation_rule_in.actions
+    db_automation_rule.priority = automation_rule_in.priority
+    db_automation_rule.isActive = automation_rule_in.isActive
 
-    db.add(db_obj)
+    # Explicitly set updatedAt from payload if provided, otherwise let onupdate handle it
+    # This is crucial for LWW, as the incoming payload's timestamp must be respected if it's the "winner"
+    if automation_rule_in.updated_at:
+        db_automation_rule.updatedAt = automation_rule_in.updated_at
+    # If not provided, SQLAlchemy's onupdate will trigger if other fields changed.
+    # If only updatedAt was different and not provided in payload, it means we are keeping the DB version.
+
+    db.add(db_automation_rule)
     db.commit()
-    db.refresh(db_obj)
-    return db_obj
+    db.refresh(db_automation_rule)
+
+    # WebSocket notification logic is moved to the service layer.
+
+    return db_automation_rule
 
 
-def delete_automation_rule(db: Session, *, automation_rule_id: str) -> AutomationRule:
-    """Deletes an AutomationRule by ID."""
-    obj = db.query(AutomationRule).get(automation_rule_id)
-    db.delete(obj)
-    db.commit()
-    return obj
+def delete_automation_rule(  # Changed to sync
+    db: Session,
+    *,
+    automation_rule_id: str,
+) -> Optional[AutomationRule]:
+    """Deletes an AutomationRule by its ID."""
+    db_automation_rule = get_automation_rule(db, automation_rule_id=automation_rule_id)
+    if db_automation_rule:
+        # Store id before deleting, as it might not be accessible after deletion from session
+        deleted_automation_rule_id = db_automation_rule.id
+        db.delete(db_automation_rule)
+        db.commit()
+
+        # WebSocket notification logic is moved to the service layer.
+        return (
+            db_automation_rule
+        )  # Return the object that was deleted (now detached from session)
+    return None
+
+
+def get_automation_rules_modified_since(
+    db: Session, *, timestamp: datetime
+) -> List[AutomationRule]:
+    """Retrieves all automation rules that were created or updated since the given timestamp."""
+    # This function might be useful for a full sync later, but not directly for processing individual queue entries.
+    # For now, it's adapted to the new model structure.
+    return db.query(AutomationRule).filter(AutomationRule.updatedAt >= timestamp).all()

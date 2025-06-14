@@ -116,11 +116,20 @@ def update_planning_transaction(
     return db_planning_transaction
 
 
-def delete_planning_transaction(db: Session, *, planning_transaction_id: str) -> bool:
+def delete_planning_transaction(db: Session, *, planning_transaction_id: str) -> Optional[PlanningTransaction]:
     """Deletes a PlanningTransaction by ID."""
     db_planning_transaction = db.query(PlanningTransaction).filter(PlanningTransaction.id == planning_transaction_id).first()
     if db_planning_transaction:
         db.delete(db_planning_transaction)
         db.commit()
-        return True
-    return False
+        return db_planning_transaction
+    return None
+
+
+def get_planning_transactions_modified_since(
+    db: Session, *, timestamp: datetime
+) -> List[PlanningTransaction]:
+    """Retrieves all planning transactions that were created or updated since the given timestamp."""
+    # This function might be useful for a full sync later, but not directly for processing individual queue entries.
+    # For now, it's adapted to the new model structure.
+    return db.query(PlanningTransaction).filter(PlanningTransaction.updatedAt >= timestamp).all()
