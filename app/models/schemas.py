@@ -39,6 +39,9 @@ class TenantCreate(TenantBase):
     user_id: str
     uuid: str | None = None
 
+class TenantUpdate(BaseModel):
+    name: str
+
 class Tenant(TenantBase):
     uuid: str
     user_id: str
@@ -65,6 +68,22 @@ class AccountGroupSchema(AccountGroupBase):
 
     class Config:
         from_attributes = True
+
+# Tenant Management Response Schemas
+class TenantDeletionResponse(BaseModel):
+    message: str
+    tenant_id: str
+    tenant_name: str
+    database_file_deleted: bool
+
+class TenantDatabaseResetResponse(BaseModel):
+    message: str
+    tenant_id: str
+
+class SyncQueueClearResponse(BaseModel):
+    message: str
+    tenant_id: str
+    entries_cleared: int = 0
 
 # Account Schemas
 class AccountBase(BaseModel):

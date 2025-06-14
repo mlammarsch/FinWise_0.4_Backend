@@ -85,6 +85,11 @@ async def root():
     debugLog(MODULE_NAME, "Root endpoint '/' accessed.")
     return {"message": "Welcome to FinWise Backend API"}
 
+@app.get("/ping")
+async def ping():
+    debugLog(MODULE_NAME, "Ping endpoint '/ping' accessed.")
+    return {"status": "online", "message": "FinWise Backend is running"}
+
 app.include_router(users.router)
 debugLog(MODULE_NAME, "Users router included.", details={"prefix": users.router.prefix if hasattr(users.router, 'prefix') else 'N/A', "tags": users.router.tags if hasattr(users.router, 'tags') else 'N/A'})
 app.include_router(tenants.router)

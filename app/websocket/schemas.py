@@ -60,12 +60,15 @@ class EntityType(Enum):
     AUTOMATION_RULE = "AutomationRule"
     PLANNING_TRANSACTION = "PlanningTransaction"
     TRANSACTION = "Transaction"
+    TENANT = "Tenant"
+    TENANT_DATABASE = "TenantDatabase"
 
 class SyncOperationType(Enum):
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
     INITIAL_LOAD = "initial_load" # Hinzugefügt für den initialen Ladevorgang
+    RESET = "reset" # Hinzugefügt für Tenant-Database-Reset
 
 class AccountType(Enum):
     CHECKING = 'CHECKING'

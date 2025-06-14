@@ -55,6 +55,67 @@ def create_tenant_specific_tables(tenant_id: str):
         errorLog(module_name, f"Failed to create tables for tenant ID: {tenant_id}. Error: {str(e)}", {"tenant_id": tenant_id, "error": str(e)})
         raise
 
+def delete_tenant_database_file(tenant_id: str) -> bool:
+    """
+    Löscht die physische SQLite-Datei für einen Mandanten.
+    Gibt True zurück wenn erfolgreich gelöscht oder Datei nicht existiert.
+    """
+    module_name = "db.database"
+    try:
+        if not TENANT_DATABASE_DIR:
+            errorLog(module_name, "TENANT_DATABASE_DIR is not configured.", {"tenant_id": tenant_id})
+            return False
+
+        db_filename = f"finwiseTenantDB_{tenant_id}.db"
+        db_path = os.path.join(TENANT_DATABASE_DIR, db_filename)
+
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            infoLog(module_name, f"Successfully deleted tenant database file: {db_path}",
+                   {"tenant_id": tenant_id, "file_path": db_path})
+            return True
+        else:
+            infoLog(module_name, f"Tenant database file does not exist: {db_path}",
+                   {"tenant_id": tenant_id, "file_path": db_path})
+            return True  # Datei existiert nicht = Ziel erreicht
+
+    except OSError as e:
+        errorLog(module_name, f"OS error deleting tenant database file for {tenant_id}",
+                {"tenant_id": tenant_id, "error": str(e)})
+        return False
+    except Exception as e:
+        errorLog(module_name, f"Unexpected error deleting tenant database file for {tenant_id}",
+                {"tenant_id": tenant_id, "error": str(e)})
+        return False
+
+def reset_tenant_database(tenant_id: str) -> bool:
+    """
+    Setzt eine Mandanten-Datenbank zurück:
+    1. Löscht die bestehende SQLite-Datei
+    2. Erstellt eine neue Datei mit allen Tabellen
+    """
+    module_name = "db.database"
+    infoLog(module_name, f"Resetting tenant database for ID: {tenant_id}", {"tenant_id": tenant_id})
+
+    try:
+        # 1. Bestehende Datei löschen
+        file_deleted = delete_tenant_database_file(tenant_id)
+        if not file_deleted:
+            warnLog(module_name, f"Could not delete existing tenant database file for {tenant_id}",
+                   {"tenant_id": tenant_id})
+
+        # 2. Neue Datenbank mit Tabellen erstellen
+        create_tenant_specific_tables(tenant_id)
+
+        infoLog(module_name, f"Successfully reset tenant database for ID: {tenant_id}",
+               {"tenant_id": tenant_id})
+        return True
+
+    except Exception as e:
+        errorLog(module_name, f"Error resetting tenant database for {tenant_id}: {str(e)}",
+                {"tenant_id": tenant_id, "error": str(e)})
+        return False
+
 if __name__ == "__main__":
     print(f"Datenbank wird erstellt unter: {SQLALCHEMY_DATABASE_URL}")
     create_db_and_tables()

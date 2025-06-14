@@ -243,3 +243,33 @@ def delete_tenant(db: Session, tenant_id: str) -> models.Tenant | None:
     else:
         warnLog(MODULE_NAME, f"Tenant with ID: {tenant_id} not found for deletion.", {"tenant_id": tenant_id})
         return None
+
+
+def update_tenant(db: Session, tenant_id: str, tenant_update: schemas.TenantUpdate) -> models.Tenant | None:
+    """Update a tenant's information (e.g., name)."""
+    debugLog(MODULE_NAME, f"Attempting to update tenant with ID: {tenant_id}",
+             {"tenant_id": tenant_id, "new_name": tenant_update.name})
+
+    db_tenant = db.query(models.Tenant).filter(models.Tenant.uuid == tenant_id).first()
+    if not db_tenant:
+        warnLog(MODULE_NAME, f"Tenant with ID: {tenant_id} not found for update.", {"tenant_id": tenant_id})
+        return None
+
+    try:
+        # Update fields
+        old_name = db_tenant.name
+        db_tenant.name = tenant_update.name
+        # updatedAt wird automatisch durch SQLAlchemy onupdate gesetzt
+
+        db.commit()
+        db.refresh(db_tenant)
+
+        infoLog(MODULE_NAME, f"Tenant with ID: {tenant_id} updated successfully",
+               {"tenant_id": tenant_id, "old_name": old_name, "new_name": db_tenant.name})
+        return db_tenant
+
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Error updating tenant with ID: {tenant_id}",
+                {"tenant_id": tenant_id, "error": str(e)})
+        db.rollback()
+        raise
