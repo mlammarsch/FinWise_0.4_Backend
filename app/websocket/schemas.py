@@ -516,6 +516,41 @@ class DataUpdateNotificationMessage(BaseModel):
                     raise ValueError(
                         f"For CategoryGroup entity with {op_type.value} operation, 'data' must be CategoryGroupPayload. Got: {type(v)}"
                     )
+            elif entity_type == EntityType.RECIPIENT:
+                if not isinstance(v, RecipientPayload):
+                    if isinstance(v, dict):
+                        return RecipientPayload(**v)
+                    raise ValueError(
+                        f"For Recipient entity with {op_type.value} operation, 'data' must be RecipientPayload. Got: {type(v)}"
+                    )
+            elif entity_type == EntityType.TAG:
+                if not isinstance(v, TagPayload):
+                    if isinstance(v, dict):
+                        return TagPayload(**v)
+                    raise ValueError(
+                        f"For Tag entity with {op_type.value} operation, 'data' must be TagPayload. Got: {type(v)}"
+                    )
+            elif entity_type == EntityType.AUTOMATION_RULE:
+                if not isinstance(v, AutomationRulePayload):
+                    if isinstance(v, dict):
+                        return AutomationRulePayload(**v)
+                    raise ValueError(
+                        f"For AutomationRule entity with {op_type.value} operation, 'data' must be AutomationRulePayload. Got: {type(v)}"
+                    )
+            elif entity_type == EntityType.PLANNING_TRANSACTION:
+                if not isinstance(v, PlanningTransactionPayload):
+                    if isinstance(v, dict):
+                        return PlanningTransactionPayload(**v)
+                    raise ValueError(
+                        f"For PlanningTransaction entity with {op_type.value} operation, 'data' must be PlanningTransactionPayload. Got: {type(v)}"
+                    )
+            elif entity_type == EntityType.TRANSACTION:
+                if not isinstance(v, TransactionPayload):
+                    if isinstance(v, dict):
+                        return TransactionPayload(**v)
+                    raise ValueError(
+                        f"For Transaction entity with {op_type.value} operation, 'data' must be TransactionPayload. Got: {type(v)}"
+                    )
             else:
                 # This case should ideally not be reached if EntityType is exhaustive for operations
                 raise ValueError(f"Unsupported entity_type '{entity_type}' for CREATE/UPDATE operation.")
