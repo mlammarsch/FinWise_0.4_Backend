@@ -487,7 +487,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                 if existing_rule:  # Treat as update if ID already exists
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_rule.updatedAt)
                     if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_rule = crud_automation_rule.update_automation_rule(db=db, db_obj=existing_rule, obj_in=payload)
+                        updated_rule = crud_automation_rule.update_automation_rule(db=db, db_automation_rule=existing_rule, automation_rule_in=payload)
                         infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for AutomationRule {entity_id}", details=payload)
                         notification_data = AutomationRulePayload.model_validate(updated_rule)
                     else:
@@ -509,7 +509,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                 if existing_rule:
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_rule.updatedAt)
                     if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_rule = crud_automation_rule.update_automation_rule(db=db, db_obj=existing_rule, obj_in=payload)
+                        updated_rule = crud_automation_rule.update_automation_rule(db=db, db_automation_rule=existing_rule, automation_rule_in=payload)
                         infoLog(MODULE_NAME, f"Applied UPDATE (LWW win) for AutomationRule {entity_id}", details=payload)
                         notification_data = AutomationRulePayload.model_validate(updated_rule)
                     else:
