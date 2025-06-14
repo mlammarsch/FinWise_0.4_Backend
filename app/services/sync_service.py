@@ -3,13 +3,13 @@ from typing import Optional  # Added for Optional WebSocket
 from fastapi import WebSocket  # Added for WebSocket type hint
 from app.websocket.schemas import (
     SyncQueueEntry, EntityType, SyncOperationType,
-    AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, DeletePayload,
+    AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, RecipientPayload, TagPayload, AutomationRulePayload, PlanningTransactionPayload, TransactionPayload, DeletePayload,
     DataUpdateNotificationMessage, ServerEventType, InitialDataPayload,
     DataStatusResponseMessage, EntityChecksum
 )
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
-from app.models.financial_models import TenantBase, Account, AccountGroup, Category, CategoryGroup  # Import all models
-from app.crud import crud_account, crud_account_group, crud_category, crud_category_group
+from app.models.financial_models import TenantBase, Account, AccountGroup, Category, CategoryGroup, Recipient, Tag, AutomationRule, PlanningTransaction, Transaction  # Import all models
+from app.crud import crud_account, crud_account_group, crud_category, crud_category_group, crud_recipient, crud_tag, crud_automation_rule, crud_planning_transaction, crud_transaction
 from app.utils.logger import infoLog, errorLog, debugLog
 from app.websocket.connection_manager import manager as websocket_manager_instance  # Import the global manager
 from datetime import datetime  # Import datetime for comparison
@@ -64,7 +64,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
         # Normalisiere incoming datetime für LWW-Vergleiche
         normalized_incoming_updated_at = normalize_datetime_for_comparison(incoming_updated_at)
 
-        notification_data: Optional[AccountPayload | AccountGroupPayload | CategoryPayload | CategoryGroupPayload | DeletePayload] = None
+        notification_data: Optional[AccountPayload | AccountGroupPayload | CategoryPayload | CategoryGroupPayload | RecipientPayload | TagPayload | AutomationRulePayload | PlanningTransactionPayload | DeletePayload] = None
         authoritative_data_used = False  # Flag to indicate if DB data was sent because incoming was old
 
         if entity_type == EntityType.ACCOUNT:
@@ -365,6 +365,281 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     infoLog(MODULE_NAME, f"CategoryGroup {entity_id} not found for DELETE")
                     notification_data = DeletePayload(id=entity_id)
                     authoritative_data_used = True
+
+        elif entity_type == EntityType.RECIPIENT:
+            if not isinstance(payload, (RecipientPayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
+                error_msg = "Invalid payload type for Recipient operation"
+                errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                return False, error_msg
+
+            if operation_type == SyncOperationType.CREATE:
+                existing_recipient = crud_recipient.get_recipient(db=db, recipient_id=entity_id)
+                if existing_recipient:  # Treat as update if ID already exists
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_recipient.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_recipient = crud_recipient.update_recipient(db=db, db_recipient=existing_recipient, recipient_in=payload)
+                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Recipient {entity_id}", details=payload)
+                        notification_data = RecipientPayload.model_validate(updated_recipient)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for Recipient {entity_id}", details=payload)
+                        notification_data = RecipientPayload.model_validate(existing_recipient)
+                        authoritative_data_used = True
+                else:
+                    if isinstance(payload, RecipientPayload):
+                        new_recipient = crud_recipient.create_recipient(db=db, recipient_in=payload)
+                        infoLog(MODULE_NAME, f"Created Recipient {entity_id}", details=payload)
+                        notification_data = RecipientPayload.model_validate(new_recipient)
+                    else:
+                        error_msg = "Payload mismatch for Recipient CREATE"
+                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                        return False, error_msg
+
+            elif operation_type == SyncOperationType.UPDATE:
+                db_recipient = crud_recipient.get_recipient(db=db, recipient_id=entity_id)
+                if db_recipient:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(db_recipient.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_recipient = crud_recipient.update_recipient(db=db, db_recipient=db_recipient, recipient_in=payload)
+                        infoLog(MODULE_NAME, f"Applied Recipient UPDATE {entity_id} (LWW win)", details=payload)
+                        notification_data = RecipientPayload.model_validate(updated_recipient)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped Recipient UPDATE {entity_id} (LWW loss/equal or no timestamp)", details=payload)
+                        notification_data = RecipientPayload.model_validate(db_recipient)
+                        authoritative_data_used = True
+                else:
+                    new_recipient = crud_recipient.create_recipient(db=db, recipient_in=payload)
+                    infoLog(MODULE_NAME, f"Created Recipient {entity_id} during UPDATE (upsert)", details=payload)
+                    notification_data = RecipientPayload.model_validate(new_recipient)
+
+            elif operation_type == SyncOperationType.DELETE:
+                deleted_recipient = crud_recipient.delete_recipient(db=db, recipient_id=entity_id)
+                if deleted_recipient:
+                    infoLog(MODULE_NAME, f"Deleted Recipient {entity_id}")
+                    notification_data = DeletePayload(id=entity_id)
+                else:
+                    infoLog(MODULE_NAME, f"Recipient {entity_id} not found for DELETE")
+                    notification_data = DeletePayload(id=entity_id)
+                    authoritative_data_used = True
+
+        elif entity_type == EntityType.TAG:
+            if not isinstance(payload, (TagPayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
+                error_msg = "Invalid payload type for Tag operation"
+                errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                return False, error_msg
+
+            if operation_type == SyncOperationType.CREATE:
+                existing_tag = crud_tag.get_tag(db=db, tag_id=entity_id)
+                if existing_tag:  # Treat as update if ID already exists
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_tag.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_tag = crud_tag.update_tag(db=db, db_tag=existing_tag, tag_in=payload)
+                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Tag {entity_id}", details=payload)
+                        notification_data = TagPayload.model_validate(updated_tag)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for Tag {entity_id}", details=payload)
+                        notification_data = TagPayload.model_validate(existing_tag)
+                        authoritative_data_used = True
+                else:
+                    if isinstance(payload, TagPayload):
+                        new_tag = crud_tag.create_tag(db=db, tag_in=payload)
+                        infoLog(MODULE_NAME, f"Created Tag {entity_id}", details=payload)
+                        notification_data = TagPayload.model_validate(new_tag)
+                    else:
+                        error_msg = "Payload mismatch for Tag CREATE"
+                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                        return False, error_msg
+
+            elif operation_type == SyncOperationType.UPDATE:
+                db_tag = crud_tag.get_tag(db=db, tag_id=entity_id)
+                if db_tag:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(db_tag.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_tag = crud_tag.update_tag(db=db, db_tag=db_tag, tag_in=payload)
+                        infoLog(MODULE_NAME, f"Applied Tag UPDATE {entity_id} (LWW win)", details=payload)
+                        notification_data = TagPayload.model_validate(updated_tag)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped Tag UPDATE {entity_id} (LWW loss/equal or no timestamp)", details=payload)
+                        notification_data = TagPayload.model_validate(db_tag)
+                        authoritative_data_used = True
+                else:
+                    new_tag = crud_tag.create_tag(db=db, tag_in=payload)
+                    infoLog(MODULE_NAME, f"Created Tag {entity_id} during UPDATE (upsert)", details=payload)
+                    notification_data = TagPayload.model_validate(new_tag)
+
+            elif operation_type == SyncOperationType.DELETE:
+                deleted_tag = crud_tag.delete_tag(db=db, tag_id=entity_id)
+                if deleted_tag:
+                    infoLog(MODULE_NAME, f"Deleted Tag {entity_id}")
+                    notification_data = DeletePayload(id=entity_id)
+                else:
+                    infoLog(MODULE_NAME, f"Tag {entity_id} not found for DELETE")
+                    notification_data = DeletePayload(id=entity_id)
+                    authoritative_data_used = True
+
+        elif entity_type == EntityType.AUTOMATION_RULE:
+            if not isinstance(payload, (AutomationRulePayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
+                error_msg = "Invalid payload type for AutomationRule operation"
+                errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                return False, error_msg
+
+            if operation_type == SyncOperationType.CREATE:
+                existing_rule = crud_automation_rule.get_automation_rule(db=db, automation_rule_id=entity_id)
+                if existing_rule:  # Treat as update if ID already exists
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_rule.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_rule = crud_automation_rule.update_automation_rule(db=db, db_obj=existing_rule, obj_in=payload)
+                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for AutomationRule {entity_id}", details=payload)
+                        notification_data = AutomationRulePayload.model_validate(updated_rule)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for AutomationRule {entity_id}", details=payload)
+                        notification_data = AutomationRulePayload.model_validate(existing_rule)
+                        authoritative_data_used = True
+                else:
+                    if isinstance(payload, AutomationRulePayload):
+                        new_rule = crud_automation_rule.create_automation_rule(db=db, automation_rule_in=payload)
+                        infoLog(MODULE_NAME, f"Created AutomationRule {entity_id}", details=payload)
+                        notification_data = AutomationRulePayload.model_validate(new_rule)
+                    else:
+                        error_msg = "Payload mismatch for AutomationRule CREATE"
+                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                        return False, error_msg
+
+            elif operation_type == SyncOperationType.UPDATE:
+                existing_rule = crud_automation_rule.get_automation_rule(db=db, automation_rule_id=entity_id)
+                if existing_rule:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_rule.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_rule = crud_automation_rule.update_automation_rule(db=db, db_obj=existing_rule, obj_in=payload)
+                        infoLog(MODULE_NAME, f"Applied UPDATE (LWW win) for AutomationRule {entity_id}", details=payload)
+                        notification_data = AutomationRulePayload.model_validate(updated_rule)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped UPDATE (LWW loss/equal) for AutomationRule {entity_id}", details=payload)
+                        notification_data = AutomationRulePayload.model_validate(existing_rule)
+                        authoritative_data_used = True
+                else:
+                    infoLog(MODULE_NAME, f"AutomationRule {entity_id} not found for UPDATE")
+                    return False, "automation_rule_not_found"
+
+            elif operation_type == SyncOperationType.DELETE:
+                existing_rule = crud_automation_rule.get_automation_rule(db=db, automation_rule_id=entity_id)
+                if existing_rule:
+                    crud_automation_rule.delete_automation_rule(db=db, automation_rule_id=entity_id)
+                    infoLog(MODULE_NAME, f"Deleted AutomationRule {entity_id}")
+                    notification_data = DeletePayload(id=entity_id)
+                else:
+                    infoLog(MODULE_NAME, f"AutomationRule {entity_id} not found for DELETE")
+                    notification_data = DeletePayload(id=entity_id)
+                    authoritative_data_used = True
+
+        elif entity_type == EntityType.PLANNING_TRANSACTION:
+            if not isinstance(payload, (PlanningTransactionPayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
+                error_msg = "Invalid payload type for PlanningTransaction operation"
+                errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                return False, error_msg
+
+            if operation_type == SyncOperationType.CREATE:
+                existing_planning_transaction = crud_planning_transaction.get_planning_transaction(db=db, planning_transaction_id=entity_id)
+                if existing_planning_transaction:  # Treat as update if ID already exists
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_planning_transaction.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_planning_transaction = crud_planning_transaction.update_planning_transaction(db=db, db_planning_transaction=existing_planning_transaction, planning_transaction_in=payload)
+                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for PlanningTransaction {entity_id}", details=payload)
+                        notification_data = PlanningTransactionPayload.model_validate(updated_planning_transaction)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for PlanningTransaction {entity_id}", details=payload)
+                        notification_data = PlanningTransactionPayload.model_validate(existing_planning_transaction)
+                        authoritative_data_used = True
+                else:
+                    if isinstance(payload, PlanningTransactionPayload):
+                        new_planning_transaction = crud_planning_transaction.create_planning_transaction(db=db, planning_transaction_in=payload)
+                        infoLog(MODULE_NAME, f"Created PlanningTransaction {entity_id}", details=payload)
+                        notification_data = PlanningTransactionPayload.model_validate(new_planning_transaction)
+                    else:
+                        error_msg = "Payload mismatch for PlanningTransaction CREATE"
+                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                        return False, error_msg
+
+            elif operation_type == SyncOperationType.UPDATE:
+                existing_planning_transaction = crud_planning_transaction.get_planning_transaction(db=db, planning_transaction_id=entity_id)
+                if existing_planning_transaction:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_planning_transaction.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
+                        updated_planning_transaction = crud_planning_transaction.update_planning_transaction(db=db, db_planning_transaction=existing_planning_transaction, planning_transaction_in=payload)
+                        infoLog(MODULE_NAME, f"Applied UPDATE (LWW win) for PlanningTransaction {entity_id}", details=payload)
+                        notification_data = PlanningTransactionPayload.model_validate(updated_planning_transaction)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped UPDATE (LWW loss/equal) for PlanningTransaction {entity_id}", details=payload)
+                        notification_data = PlanningTransactionPayload.model_validate(existing_planning_transaction)
+                        authoritative_data_used = True
+                else:
+                    infoLog(MODULE_NAME, f"PlanningTransaction {entity_id} not found for UPDATE")
+                    return False, "planning_transaction_not_found"
+
+            elif operation_type == SyncOperationType.DELETE:
+                existing_planning_transaction = crud_planning_transaction.get_planning_transaction(db=db, planning_transaction_id=entity_id)
+                if existing_planning_transaction:
+                    crud_planning_transaction.delete_planning_transaction(db=db, planning_transaction_id=entity_id)
+                    infoLog(MODULE_NAME, f"Deleted PlanningTransaction {entity_id}")
+                    notification_data = DeletePayload(id=entity_id)
+                else:
+                    infoLog(MODULE_NAME, f"PlanningTransaction {entity_id} not found for DELETE")
+                    notification_data = DeletePayload(id=entity_id)
+                    authoritative_data_used = True
+
+        elif entity_type == EntityType.TRANSACTION:
+            if not isinstance(payload, (TransactionPayload, DeletePayload)) and operation_type != SyncOperationType.DELETE:
+                error_msg = "Invalid payload type for Transaction operation"
+                errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                return False, error_msg
+
+            if operation_type == SyncOperationType.CREATE:
+                existing_transaction = crud_transaction.get_transaction(db=db, transaction_id=entity_id)
+                if existing_transaction:
+                    # LWW: Compare timestamps
+                    if isinstance(payload, TransactionPayload) and payload.updated_at and existing_transaction.updatedAt and payload.updated_at > existing_transaction.updatedAt:
+                        updated_transaction = crud_transaction.update_transaction(db=db, db_transaction=existing_transaction, transaction_in=payload)
+                        infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Transaction {entity_id}", details=payload)
+                        notification_data = TransactionPayload.model_validate(updated_transaction)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped CREATE as UPDATE (LWW loss/equal) for Transaction {entity_id}", details=payload)
+                        notification_data = TransactionPayload.model_validate(existing_transaction)
+                        authoritative_data_used = True
+                else:
+                    if isinstance(payload, TransactionPayload):
+                        new_transaction = crud_transaction.create_transaction(db=db, transaction_in=payload)
+                        infoLog(MODULE_NAME, f"Created Transaction {entity_id}", details=payload)
+                        notification_data = TransactionPayload.model_validate(new_transaction)
+                    else:
+                        error_msg = "Payload mismatch for Transaction CREATE"
+                        errorLog(MODULE_NAME, error_msg, details={"payload": payload, "entry_id": entry.id})
+                        return False, error_msg
+
+            elif operation_type == SyncOperationType.UPDATE:
+                existing_transaction = crud_transaction.get_transaction(db=db, transaction_id=entity_id)
+                if existing_transaction and isinstance(payload, TransactionPayload):
+                    # LWW: Compare timestamps
+                    if payload.updated_at and existing_transaction.updatedAt and payload.updated_at > existing_transaction.updatedAt:
+                        updated_transaction = crud_transaction.update_transaction(db=db, db_transaction=existing_transaction, transaction_in=payload)
+                        infoLog(MODULE_NAME, f"Applied UPDATE (LWW win) for Transaction {entity_id}", details=payload)
+                        notification_data = TransactionPayload.model_validate(updated_transaction)
+                    else:
+                        infoLog(MODULE_NAME, f"Skipped UPDATE (LWW loss/equal) for Transaction {entity_id}", details=payload)
+                        notification_data = TransactionPayload.model_validate(existing_transaction)
+                        authoritative_data_used = True
+                else:
+                    infoLog(MODULE_NAME, f"Transaction {entity_id} not found for UPDATE")
+                    return False, "transaction_not_found"
+
+            elif operation_type == SyncOperationType.DELETE:
+                existing_transaction = crud_transaction.get_transaction(db=db, transaction_id=entity_id)
+                if existing_transaction:
+                    crud_transaction.delete_transaction(db=db, transaction_id=entity_id)
+                    infoLog(MODULE_NAME, f"Deleted Transaction {entity_id}")
+                    notification_data = DeletePayload(id=entity_id)
+                else:
+                    infoLog(MODULE_NAME, f"Transaction {entity_id} not found for DELETE")
+                    notification_data = DeletePayload(id=entity_id)
+
         else:
             error_msg = f"Unknown entity type: {entity_type}"
             errorLog(MODULE_NAME, error_msg, details={"entry_id": entry.id})
@@ -422,19 +697,34 @@ async def get_initial_data_for_tenant(tenant_id: str) -> tuple[Optional[InitialD
         account_groups_db = crud_account_group.get_account_groups(db=db)
         categories_db = crud_category.get_categories(db=db)
         category_groups_db = crud_category_group.get_category_groups(db=db)
+        recipients_db = crud_recipient.get_recipients(db=db)
+        tags_db = crud_tag.get_tags(db=db)
+        automation_rules_db = crud_automation_rule.get_automation_rules(db=db)
+        planning_transactions_db = crud_planning_transaction.get_planning_transactions(db=db)
+        transactions_db = crud_transaction.get_transactions(db=db)
 
         accounts_payload = [AccountPayload.model_validate(acc) for acc in accounts_db]
         account_groups_payload = [AccountGroupPayload.model_validate(ag) for ag in account_groups_db]
         categories_payload = [CategoryPayload.model_validate(cat) for cat in categories_db]
         category_groups_payload = [CategoryGroupPayload.model_validate(cg) for cg in category_groups_db]
+        recipients_payload = [RecipientPayload.model_validate(rec) for rec in recipients_db]
+        tags_payload = [TagPayload.model_validate(tag) for tag in tags_db]
+        automation_rules_payload = [AutomationRulePayload.model_validate(rule) for rule in automation_rules_db]
+        planning_transactions_payload = [PlanningTransactionPayload.model_validate(pt) for pt in planning_transactions_db]
+        transactions_payload = [TransactionPayload.model_validate(tx) for tx in transactions_db]
 
         initial_data = InitialDataPayload(
             accounts=accounts_payload,
             account_groups=account_groups_payload,
             categories=categories_payload,
-            category_groups=category_groups_payload
+            category_groups=category_groups_payload,
+            recipients=recipients_payload,
+            tags=tags_payload,
+            automation_rules=automation_rules_payload,
+            planning_transactions=planning_transactions_payload,
+            transactions=transactions_payload
         )
-        infoLog(MODULE_NAME, f"Successfully retrieved initial data for tenant {tenant_id}. Accounts: {len(accounts_payload)}, AccountGroups: {len(account_groups_payload)}, Categories: {len(categories_payload)}, CategoryGroups: {len(category_groups_payload)}")
+        infoLog(MODULE_NAME, f"Successfully retrieved initial data for tenant {tenant_id}. Accounts: {len(accounts_payload)}, AccountGroups: {len(account_groups_payload)}, Categories: {len(categories_payload)}, CategoryGroups: {len(category_groups_payload)}, Recipients: {len(recipients_payload)}, Tags: {len(tags_payload)}, AutomationRules: {len(automation_rules_payload)}, PlanningTransactions: {len(planning_transactions_payload)}, Transactions: {len(transactions_payload)}")
         return initial_data, None
 
     except sqlite3.OperationalError as oe:
@@ -573,6 +863,45 @@ async def get_data_status_for_tenant(tenant_id: str, entity_types: Optional[list
 
                     checksums.append(EntityChecksum(
                         entity_id=group.id,
+                        checksum=checksum,
+                        last_modified=last_modified
+                    ))
+
+            elif entity_type == EntityType.RECIPIENT:
+                recipients_db = crud_recipient.get_recipients(db=db)
+                for recipient in recipients_db:
+                    recipient_data = {
+                        'id': recipient.id,
+                        'name': recipient.name,
+                        'defaultCategoryId': recipient.defaultCategoryId,
+                        'note': recipient.note,
+                        'updated_at': recipient.updatedAt.isoformat() if recipient.updatedAt else None
+                    }
+                    checksum = calculate_entity_checksum(recipient_data)
+                    last_modified = int(recipient.updatedAt.timestamp()) if recipient.updatedAt else 0
+
+                    checksums.append(EntityChecksum(
+                        entity_id=recipient.id,
+                        checksum=checksum,
+                        last_modified=last_modified
+                    ))
+
+            elif entity_type == EntityType.TAG:
+                tags_db = crud_tag.get_tags(db=db)
+                for tag in tags_db:
+                    tag_data = {
+                        'id': tag.id,
+                        'name': tag.name,
+                        'parentTagId': tag.parentTagId,
+                        'color': tag.color,
+                        'icon': tag.icon,
+                        'updated_at': tag.updatedAt.isoformat() if tag.updatedAt else None
+                    }
+                    checksum = calculate_entity_checksum(tag_data)
+                    last_modified = int(tag.updatedAt.timestamp()) if tag.updatedAt else 0
+
+                    checksums.append(EntityChecksum(
+                        entity_id=tag.id,
                         checksum=checksum,
                         last_modified=last_modified
                     ))

@@ -55,6 +55,11 @@ class EntityType(Enum):
     ACCOUNT_GROUP = "AccountGroup"
     CATEGORY = "Category"
     CATEGORY_GROUP = "CategoryGroup"
+    RECIPIENT = "Recipient"
+    TAG = "Tag"
+    AUTOMATION_RULE = "AutomationRule"
+    PLANNING_TRANSACTION = "PlanningTransaction"
+    TRANSACTION = "Transaction"
 
 class SyncOperationType(Enum):
     CREATE = "create"
@@ -150,12 +155,110 @@ class CategoryGroupPayload(BaseModel):
         use_enum_values = True
         from_attributes = True
 
+class RecipientPayload(BaseModel):
+    id: str # UUID as string from frontend
+    name: str
+    defaultCategoryId: Optional[str] = None
+    note: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
+
+class TagPayload(BaseModel):
+    id: str # UUID as string from frontend
+    name: str
+    parentTagId: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
+
+class AutomationRulePayload(BaseModel):
+    id: str # UUID as string from frontend
+    name: str
+    description: Optional[str] = None
+    stage: str # 'PRE' | 'DEFAULT' | 'POST'
+    conditions: list[Dict[str, Any]] = Field(default_factory=list) # Array of RuleCondition objects
+    actions: list[Dict[str, Any]] = Field(default_factory=list) # Array of RuleAction objects
+    priority: int
+    isActive: bool
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
+
+class PlanningTransactionPayload(BaseModel):
+    id: str # UUID as string from frontend
+    name: str
+    accountId: str
+    categoryId: Optional[str] = None
+    tagIds: list[str] = Field(default_factory=list) # Array of tag IDs
+    recipientId: Optional[str] = None
+    amount: float
+    amountType: str # 'EXACT', 'APPROXIMATE', 'RANGE'
+    approximateAmount: Optional[float] = None
+    minAmount: Optional[float] = None
+    maxAmount: Optional[float] = None
+    note: Optional[str] = None
+    startDate: str # ISO 8601 date string
+    valueDate: Optional[str] = None # ISO 8601 date string
+    endDate: Optional[str] = None # ISO 8601 date string
+    recurrencePattern: str # 'ONCE', 'DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'
+    recurrenceCount: Optional[int] = None
+    recurrenceEndType: str # 'NEVER', 'COUNT', 'DATE'
+    executionDay: Optional[int] = None
+    weekendHandling: str # 'NONE', 'BEFORE', 'AFTER'
+    transactionType: Optional[str] = None # 'EXPENSE', 'INCOME', 'ACCOUNTTRANSFER', 'CATEGORYTRANSFER', 'RECONCILE'
+    counterPlanningTransactionId: Optional[str] = None
+    transferToAccountId: Optional[str] = None
+    transferToCategoryId: Optional[str] = None
+    isActive: bool
+    forecastOnly: bool
+    autoExecute: Optional[bool] = False
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
+
+class TransactionPayload(BaseModel):
+    id: str # UUID as string from frontend
+    accountId: str
+    categoryId: Optional[str] = None
+    date: str # ISO 8601 date string
+    valueDate: str # ISO 8601 date string
+    amount: float
+    description: str
+    note: Optional[str] = None
+    tagIds: list[str] = Field(default_factory=list) # Array of tag IDs
+    type: str # TransactionType enum: 'EXPENSE', 'INCOME', 'ACCOUNTTRANSFER', 'CATEGORYTRANSFER', 'RECONCILE'
+    runningBalance: float
+    counterTransactionId: Optional[str] = None
+    planningTransactionId: Optional[str] = None
+    isReconciliation: Optional[bool] = False
+    isCategoryTransfer: Optional[bool] = False
+    transferToAccountId: Optional[str] = None
+    reconciled: Optional[bool] = False
+    toCategoryId: Optional[str] = None
+    payee: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
+
 # For DELETE operation, payload might just contain the ID or be null
 class DeletePayload(BaseModel):
     id: str
 
 # Union type for the payload based on entityType and operationType
-SyncEntryDataPayload = Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, DeletePayload, None]
+SyncEntryDataPayload = Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, RecipientPayload, TagPayload, AutomationRulePayload, PlanningTransactionPayload, TransactionPayload, DeletePayload, None]
 
 class SyncQueueEntry(BaseModel):
     id: str # UUID of the queue entry itself
@@ -240,6 +343,31 @@ class SyncQueueEntry(BaseModel):
                     if isinstance(v, dict):
                         return CategoryGroupPayload(**v)
                     raise ValueError("Payload must be CategoryGroupPayload for CategoryGroup entity type")
+            elif entity_type == EntityType.RECIPIENT:
+                if not isinstance(v, RecipientPayload):
+                    if isinstance(v, dict):
+                        return RecipientPayload(**v)
+                    raise ValueError("Payload must be RecipientPayload for Recipient entity type")
+            elif entity_type == EntityType.TAG:
+                if not isinstance(v, TagPayload):
+                    if isinstance(v, dict):
+                        return TagPayload(**v)
+                    raise ValueError("Payload must be TagPayload for Tag entity type")
+            elif entity_type == EntityType.AUTOMATION_RULE:
+                if not isinstance(v, AutomationRulePayload):
+                    if isinstance(v, dict):
+                        return AutomationRulePayload(**v)
+                    raise ValueError("Payload must be AutomationRulePayload for AutomationRule entity type")
+            elif entity_type == EntityType.PLANNING_TRANSACTION:
+                if not isinstance(v, PlanningTransactionPayload):
+                    if isinstance(v, dict):
+                        return PlanningTransactionPayload(**v)
+                    raise ValueError("Payload must be PlanningTransactionPayload for PlanningTransaction entity type")
+            elif entity_type == EntityType.TRANSACTION:
+                if not isinstance(v, TransactionPayload):
+                    if isinstance(v, dict):
+                        return TransactionPayload(**v)
+                    raise ValueError("Payload must be TransactionPayload for Transaction entity type")
         return v
 
     class Config:
@@ -296,9 +424,9 @@ class ServerEventType(Enum):
 
 
 # The 'data' field for a DATA_UPDATE notification message.
-# It can be a full Account, AccountGroup, Category, or CategoryGroup payload for create/update operations,
+# It can be a full Account, AccountGroup, Category, CategoryGroup, Recipient, Tag, AutomationRule, PlanningTransaction, or Transaction payload for create/update operations,
 # or a DeletePayload (containing just the ID) for delete operations.
-NotificationDataPayload = Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, DeletePayload]
+NotificationDataPayload = Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, RecipientPayload, TagPayload, AutomationRulePayload, PlanningTransactionPayload, TransactionPayload, DeletePayload]
 
 
 class DataUpdateNotificationMessage(BaseModel):
@@ -437,6 +565,11 @@ class InitialDataPayload(BaseModel):
     account_groups: list[AccountGroupPayload] = Field(default_factory=list)
     categories: list[CategoryPayload] = Field(default_factory=list)
     category_groups: list[CategoryGroupPayload] = Field(default_factory=list)
+    recipients: list[RecipientPayload] = Field(default_factory=list)
+    tags: list[TagPayload] = Field(default_factory=list)
+    automation_rules: list[AutomationRulePayload] = Field(default_factory=list)
+    planning_transactions: list[PlanningTransactionPayload] = Field(default_factory=list)
+    transactions: list[TransactionPayload] = Field(default_factory=list)
 
 class InitialDataLoadMessage(BaseModel):
     """
