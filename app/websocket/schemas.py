@@ -444,6 +444,10 @@ class DataUpdateNotificationMessage(BaseModel):
     operation_type: SyncOperationType
     data: NotificationDataPayload
 
+    class Config:
+        use_enum_values = True  # Enums als ihre Werte serialisieren
+        from_attributes = True
+
     @validator('data', pre=True, always=True)
     def validate_data_based_on_operation_and_entity(cls, v, values):
         """
