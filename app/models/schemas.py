@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import List
 
 # User Schemas
 class UserBase(BaseModel):
@@ -50,6 +51,31 @@ class Tenant(TenantBase):
 
     class Config:
         from_attributes = True
+
+# UserSettings Schemas
+class UserSettingsBase(BaseModel):
+    log_level: str = "INFO"
+    enabled_log_categories: List[str] = ["store", "ui", "service"]
+    history_retention_days: int = 60
+
+class UserSettingsCreate(UserSettingsBase):
+    user_id: str
+
+class UserSettingsUpdate(UserSettingsBase):
+    updated_at: datetime | None = None
+
+class UserSettings(UserSettingsBase):
+    id: str
+    user_id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UserSettingsSyncPayload(UserSettingsBase):
+    """Schema für Settings-Synchronisation zwischen Frontend und Backend"""
+    updated_at: datetime | None = None
 
 # AccountGroup Schemas
 class AccountGroupBase(BaseModel):

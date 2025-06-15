@@ -8,6 +8,7 @@ from app.routers import users, tenants
 from app.websocket import endpoints as websocket_endpoints # WebSocket-Router importieren
 from app.api.v1.endpoints import sync as sync_endpoints # Sync-API-Router importieren
 from app.api.v1.endpoints import websocket_management # WebSocket-Management-API importieren
+from app.api.v1.endpoints import user_settings # UserSettings-API importieren
 from app.utils.logger import infoLog, errorLog, debugLog # Added debugLog
 
 MODULE_NAME = "MainApp" # Changed to PascalCase for consistency with other module names in logs
@@ -98,6 +99,8 @@ app.include_router(websocket_endpoints.router, prefix="/ws_finwise") # WebSocket
 debugLog(MODULE_NAME, "WebSocket endpoints router included.", details={"prefix": "/ws_finwise", "tags": websocket_endpoints.router.tags if hasattr(websocket_endpoints.router, 'tags') else 'N/A'})
 app.include_router(sync_endpoints.router, prefix="/api/v1/sync", tags=["sync"]) # Sync-API-Router einbinden
 debugLog(MODULE_NAME, "Sync API router included.", details={"prefix": "/api/v1/sync", "tags": ["sync"]})
+app.include_router(user_settings.router, prefix="/api/v1/user", tags=["user-settings"]) # UserSettings-API-Router einbinden
+debugLog(MODULE_NAME, "UserSettings API router included.", details={"prefix": "/api/v1/user", "tags": ["user-settings"]})
 app.include_router(websocket_management.router, prefix="/api/v1/websocket", tags=["websocket-management"]) # WebSocket-Management-API einbinden
 debugLog(MODULE_NAME, "WebSocket Management API router included.", details={"prefix": "/api/v1/websocket", "tags": ["websocket-management"]})
 
