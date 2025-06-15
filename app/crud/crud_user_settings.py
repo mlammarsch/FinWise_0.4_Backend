@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 
@@ -51,13 +51,17 @@ def update_user_settings(
 
     # Last-Write-Wins Konfliktlösung
     if obj_in.updated_at and db_obj.updated_at:
-        if obj_in.updated_at <= db_obj.updated_at:
+        # Konvertiere obj_in.updated_at (aware UTC) zu naivem UTC für den Vergleich
+        # db_obj.updated_at ist bereits naiv UTC aus der DB (erstellt mit datetime.utcnow())
+        incoming_updated_at_naive_utc = obj_in.updated_at.replace(tzinfo=None)
+
+        if incoming_updated_at_naive_utc <= db_obj.updated_at:
             debugLog(
                 MODULE_NAME,
-                f"Settings-Update übersprungen - lokale Version ist neuer",
+                f"Settings-Update übersprungen - lokale DB-Version ist neuer oder gleich",
                 details={
-                    "incoming_timestamp": obj_in.updated_at.isoformat(),
-                    "local_timestamp": db_obj.updated_at.isoformat()
+                    "incoming_timestamp": obj_in.updated_at.isoformat(), # Logge das Original für Klarheit
+                    "db_timestamp": db_obj.updated_at.isoformat()
                 }
             )
             return db_obj
@@ -69,7 +73,12 @@ def update_user_settings(
     db_obj.log_level = obj_in.log_level
     db_obj.enabled_log_categories = enabled_categories_json
     db_obj.history_retention_days = obj_in.history_retention_days
-    db_obj.updated_at = obj_in.updated_at if obj_in.updated_at else datetime.utcnow()
+
+    # Stelle sicher, dass updated_at als naiver UTC-Timestamp gespeichert wird
+    if obj_in.updated_at:
+        db_obj.updated_at = obj_in.updated_at.replace(tzinfo=None)
+    else:
+        db_obj.updated_at = datetime.utcnow() # datetime.utcnow() ist bereits naiv
 
     db.commit()
     db.refresh(db_obj)
