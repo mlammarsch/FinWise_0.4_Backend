@@ -41,13 +41,28 @@ class TenantService:
                     {"tenant_id": tenant_id, "user_id": user_id, "owner_id": db_tenant.user_id})
             raise PermissionError(f"User {user_id} is not authorized to delete tenant {tenant_id}")
 
-        # 2. Mandanten-DB-Datei löschen (vor DB-Löschung für bessere Fehlerbehandlung)
+        # 2. Zuerst alle WebSocket-Verbindungen für diesen Mandanten schließen
+        debugLog(MODULE_NAME, f"Attempting to close WebSocket connections for tenant {tenant_id} before file deletion.",
+                {"tenant_id": tenant_id})
+        await manager.close_connections_for_tenant(tenant_id, reason="Tenant deletion process initiated")
+        infoLog(MODULE_NAME, f"WebSocket connections for tenant {tenant_id} requested to close.",
+                {"tenant_id": tenant_id})
+
+        # Kurze Pause, um den Verbindungen Zeit zum Schließen zu geben, bevor die Datei gelöscht wird.
+        # Dies ist ein Workaround und sollte idealerweise durch einen robusteren Mechanismus ersetzt werden,
+        # der sicherstellt, dass alle Ressourcen freigegeben sind.
+        import asyncio
+        await asyncio.sleep(0.5) # 500ms Pause
+
+        # 3. Mandanten-DB-Datei löschen (vor DB-Löschung für bessere Fehlerbehandlung)
+        debugLog(MODULE_NAME, f"Proceeding to delete database file for tenant {tenant_id}.",
+                {"tenant_id": tenant_id})
         tenant_db_deleted = await TenantService._delete_tenant_database_file(tenant_id)
         if not tenant_db_deleted:
             warnLog(MODULE_NAME, f"Could not delete tenant database file for {tenant_id}, continuing with DB deletion",
                    {"tenant_id": tenant_id})
 
-        # 3. Mandant aus Haupt-DB löschen
+        # 4. Mandant aus Haupt-DB löschen
         try:
             deleted_tenant = crud.delete_tenant(db, tenant_id=tenant_id)
             if not deleted_tenant:
@@ -58,7 +73,7 @@ class TenantService:
             infoLog(MODULE_NAME, f"Tenant {tenant_id} successfully deleted completely",
                    {"tenant_id": tenant_id, "tenant_name": deleted_tenant.name, "db_file_deleted": tenant_db_deleted})
 
-            # 4. WebSocket-Benachrichtigung an andere Clients senden
+            # 5. WebSocket-Benachrichtigung an andere Clients senden (obwohl keine mehr verbunden sein sollten für diesen Tenant)
             await TenantService._notify_tenant_deletion(tenant_id, deleted_tenant.name)
 
             return deleted_tenant
@@ -94,19 +109,29 @@ class TenantService:
             raise PermissionError(f"User {user_id} is not authorized to reset database for tenant {tenant_id}")
 
         try:
-            # 2. Mandanten-DB-Datei löschen und neu erstellen
+            # 2. WebSocket-Verbindungen schließen
+            debugLog(MODULE_NAME, f"Attempting to close WebSocket connections for tenant {tenant_id} before database reset.",
+                    {"tenant_id": tenant_id})
+            await manager.close_connections_for_tenant(tenant_id, reason="Tenant database reset process initiated")
+            infoLog(MODULE_NAME, f"WebSocket connections for tenant {tenant_id} requested to close for reset.",
+                    {"tenant_id": tenant_id})
+
+            import asyncio # Sicherstellen, dass asyncio importiert ist
+            await asyncio.sleep(0.5) # Kurze Pause
+
+            # 3. Mandanten-DB-Datei löschen und neu erstellen
             tenant_db_deleted = await TenantService._delete_tenant_database_file(tenant_id)
             if not tenant_db_deleted:
                 warnLog(MODULE_NAME, f"Could not delete existing tenant database file for {tenant_id}",
                        {"tenant_id": tenant_id})
 
-            # 3. Neue Mandanten-DB mit Tabellen erstellen
+            # 4. Neue Mandanten-DB mit Tabellen erstellen
             create_tenant_specific_tables(tenant_id)
 
             infoLog(MODULE_NAME, f"Tenant database successfully reset for {tenant_id}",
                    {"tenant_id": tenant_id, "tenant_name": db_tenant.name})
 
-            # 4. WebSocket-Benachrichtigung an Clients senden
+            # 5. WebSocket-Benachrichtigung an Clients senden
             await TenantService._notify_tenant_database_reset(tenant_id, db_tenant.name)
 
             return True
@@ -162,33 +187,64 @@ class TenantService:
 
     @staticmethod
     async def _delete_tenant_database_file(tenant_id: str) -> bool:
-        """Löscht die physische SQLite-Datei für einen Mandanten"""
-        try:
-            if not TENANT_DATABASE_DIR:
-                errorLog(MODULE_NAME, "TENANT_DATABASE_DIR not configured", {"tenant_id": tenant_id})
-                return False
+        """Löscht die physische SQLite-Datei für einen Mandanten mit mehreren Versuchen."""
+        # Importiere die neue Funktion
+        from ..db.database import dispose_tenant_engine
 
-            db_filename = f"finwiseTenantDB_{tenant_id}.db"
-            db_path = os.path.join(TENANT_DATABASE_DIR, db_filename)
+        if not TENANT_DATABASE_DIR:
+            errorLog(MODULE_NAME, "TENANT_DATABASE_DIR not configured", {"tenant_id": tenant_id})
+            return False
 
-            if os.path.exists(db_path):
+        db_filename = f"finwiseTenantDB_{tenant_id}.db"
+        db_path = os.path.join(TENANT_DATABASE_DIR, db_filename)
+
+        if not os.path.exists(db_path):
+            debugLog(MODULE_NAME, f"Tenant database file does not exist (already deleted?): {db_path}",
+                    {"tenant_id": tenant_id, "file_path": db_path})
+            return True # Ziel erreicht, wenn Datei nicht existiert
+
+        # Zuerst versuchen, alle Verbindungen zur Engine dieser Tenant-DB zu schließen
+        debugLog(MODULE_NAME, f"Attempting to dispose engine for tenant {tenant_id} before file deletion.",
+                {"tenant_id": tenant_id})
+        dispose_tenant_engine(tenant_id)
+        infoLog(MODULE_NAME, f"Engine for tenant {tenant_id} requested to dispose.",
+                {"tenant_id": tenant_id})
+
+        # Kurze Pause nach dem dispose, um sicherzustellen, dass die Operationen abgeschlossen sind.
+        import asyncio
+        await asyncio.sleep(0.1) # 100ms Pause, kürzer als zuvor, da dispose direkter sein sollte
+
+        # Mehrere Löschversuche
+        max_attempts = 3
+        wait_times = [0.2, 0.5, 1.0] # Wartezeiten in Sekunden für jeden Versuch
+
+        for attempt in range(max_attempts):
+            try:
+                debugLog(MODULE_NAME, f"Attempt {attempt + 1} to delete tenant database file: {db_path}",
+                        {"tenant_id": tenant_id, "attempt": attempt + 1, "max_attempts": max_attempts})
                 os.remove(db_path)
-                infoLog(MODULE_NAME, f"Successfully deleted tenant database file: {db_path}",
-                       {"tenant_id": tenant_id, "file_path": db_path})
+                infoLog(MODULE_NAME, f"Successfully deleted tenant database file on attempt {attempt + 1}: {db_path}",
+                       {"tenant_id": tenant_id, "file_path": db_path, "attempt": attempt + 1})
                 return True
-            else:
-                debugLog(MODULE_NAME, f"Tenant database file does not exist: {db_path}",
-                        {"tenant_id": tenant_id, "file_path": db_path})
-                return True  # Datei existiert nicht = Ziel erreicht
+            except OSError as e:
+                errorLog(MODULE_NAME, f"OS error on attempt {attempt + 1} deleting tenant database file for {tenant_id}. Path: {db_path}",
+                        {"tenant_id": tenant_id, "file_path": db_path, "attempt": attempt + 1, "error_type": type(e).__name__, "error": str(e)})
+                if attempt < max_attempts - 1:
+                    wait_duration = wait_times[attempt]
+                    warnLog(MODULE_NAME, f"Waiting {wait_duration}s before next delete attempt for {tenant_id}.",
+                            {"tenant_id": tenant_id, "wait_duration": wait_duration})
+                    import asyncio # Import hier, da es nur in diesem Block benötigt wird
+                    await asyncio.sleep(wait_duration)
+                else:
+                    errorLog(MODULE_NAME, f"Failed to delete tenant database file for {tenant_id} after {max_attempts} attempts. Path: {db_path}",
+                            {"tenant_id": tenant_id, "file_path": db_path, "max_attempts": max_attempts})
+                    return False # Alle Versuche fehlgeschlagen
+            except Exception as e: # Andere unerwartete Fehler
+                errorLog(MODULE_NAME, f"Unexpected error on attempt {attempt + 1} deleting tenant database file for {tenant_id}. Path: {db_path}",
+                        {"tenant_id": tenant_id, "file_path": db_path, "attempt": attempt + 1, "error_type": type(e).__name__, "error": str(e)})
+                return False # Bei unerwarteten Fehlern sofort abbrechen
 
-        except OSError as e:
-            errorLog(MODULE_NAME, f"OS error deleting tenant database file for {tenant_id}",
-                    {"tenant_id": tenant_id, "error": str(e)})
-            return False
-        except Exception as e:
-            errorLog(MODULE_NAME, f"Unexpected error deleting tenant database file for {tenant_id}",
-                    {"tenant_id": tenant_id, "error": str(e)})
-            return False
+        return False # Sollte nicht erreicht werden, wenn die Logik korrekt ist
 
     @staticmethod
     async def _notify_tenant_deletion(tenant_id: str, tenant_name: str):
@@ -197,13 +253,27 @@ class TenantService:
             # Benachrichtigung an alle Clients des Mandanten senden
             delete_message = DataUpdateNotificationMessage(
                 tenant_id=tenant_id,
-                entity_type="Tenant",
-                operation_type="delete",
-                data={"id": tenant_id, "name": tenant_name}
+                entity_type="Tenant", # Wird automatisch zu EntityType.TENANT durch Pydantic Validierung
+                operation_type="delete", # Wird automatisch zu SyncOperationType.DELETE
+                data={"id": tenant_id, "name": tenant_name} # Wird zu DeletePayload
+            )
+
+            dumped_message = delete_message.model_dump()
+            debugLog(
+                MODULE_NAME,
+                f"Dumped tenant deletion notification for {tenant_id}",
+                details={
+                    "tenant_id": tenant_id,
+                    "dumped_message_type": type(dumped_message),
+                    "dumped_message_content": str(dumped_message),
+                    "original_event_type_in_model": type(delete_message.event_type),
+                    "original_entity_type_in_model": type(delete_message.entity_type),
+                    "original_operation_type_in_model": type(delete_message.operation_type)
+                }
             )
 
             await manager.broadcast_json_to_tenant(
-                delete_message.model_dump(),
+                dumped_message, # Sicherstellen, dass das gedumpte Objekt verwendet wird
                 tenant_id
             )
 
@@ -212,7 +282,7 @@ class TenantService:
 
         except Exception as e:
             errorLog(MODULE_NAME, f"Error sending tenant deletion notification for {tenant_id}",
-                    {"tenant_id": tenant_id, "error": str(e)})
+                    {"tenant_id": tenant_id, "error_type": type(e).__name__, "error": str(e)})
 
     @staticmethod
     async def _notify_tenant_database_reset(tenant_id: str, tenant_name: str):

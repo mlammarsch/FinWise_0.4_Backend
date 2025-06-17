@@ -88,6 +88,21 @@ def delete_tenant_database_file(tenant_id: str) -> bool:
                 {"tenant_id": tenant_id, "error": str(e)})
         return False
 
+# Hinzugefügte Funktion zum expliziten Schließen von Verbindungen einer Tenant-Engine
+def dispose_tenant_engine(tenant_id: str):
+    """Erstellt eine Engine für die Tenant-DB und ruft dispose() auf, um alle Verbindungen zu schließen."""
+    module_name = "db.database"
+    try:
+        tenant_db_url = get_tenant_db_url(tenant_id)
+        # Erstelle eine Engine-Instanz (muss nicht dieselbe sein, die die Verbindung hält)
+        # dispose() wirkt auf den Verbindungspool, der mit dieser URL assoziiert ist.
+        engine_to_dispose = create_engine(tenant_db_url, connect_args={"check_same_thread": False})
+        engine_to_dispose.dispose()
+        infoLog(module_name, f"Disposed connection pool for tenant ID: {tenant_id} ({tenant_db_url})", {"tenant_id": tenant_id})
+    except Exception as e:
+        errorLog(module_name, f"Error disposing engine for tenant ID: {tenant_id}. Error: {str(e)}", {"tenant_id": tenant_id, "error": str(e)})
+        # Fehler hier nicht weiter werfen, da der Löschversuch trotzdem stattfinden soll
+
 def reset_tenant_database(tenant_id: str) -> bool:
     """
     Setzt eine Mandanten-Datenbank zurück:
