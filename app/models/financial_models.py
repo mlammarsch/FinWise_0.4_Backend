@@ -17,6 +17,7 @@ class AccountGroup(TenantBase):
     name = Column(String, nullable=False, index=True)
     sortOrder = Column(Integer, nullable=False, default=0)
     image = Column(String, nullable=True)
+    logo_path = Column(String, nullable=True)
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -47,6 +48,7 @@ class Account(TenantBase):
     creditLimit = Column(Numeric(10, 2), nullable=True, default=0.0)
     offset = Column(Integer, nullable=False, default=0) # Assuming offset is an integer
     image = Column(String, nullable=True)
+    logo_path = Column(String, nullable=True)
 
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)
