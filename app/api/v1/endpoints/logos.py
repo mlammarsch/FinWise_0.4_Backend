@@ -81,7 +81,6 @@ async def upload_logo(
 @router.delete("/logos/{logo_path:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_logo_endpoint(
     logo_path: str,
-    current_user: models.User = Depends(deps.get_current_active_user), # Ensure authorized access
     current_tenant_id: str = Depends(deps.get_current_tenant_id)
 ):
     """
@@ -119,7 +118,6 @@ async def delete_logo_endpoint(
 @router.get("/logos/{logo_path:path}")
 async def get_logo(
     logo_path: str,
-    current_user: models.User = Depends(deps.get_current_active_user),
     current_tenant_id: str = Depends(deps.get_current_tenant_id)
 ):
     """
