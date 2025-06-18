@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 from fastapi import WebSocket  # Added for type hinting
 
 from app.models.financial_models import Account
+from app.models import schemas # Added import
 from app.websocket.schemas import (
-    AccountPayload,
+    # AccountPayload, # Replaced by schemas.AccountUpdate
     DataUpdateNotificationMessage,
     EntityType,
     SyncOperationType,
@@ -22,7 +23,7 @@ from app.websocket.connection_manager import (
 def create_account(  # Changed to sync, WebSocket logic moved to service layer
     db: Session,
     *,
-    account_in: AccountPayload,
+    account_in: schemas.AccountPayload, # Kept AccountPayload for create
 ) -> Account:
     """Creates a new Account."""
     # Robuste Behandlung von accountType (kann String oder Enum sein)
@@ -71,7 +72,7 @@ def update_account(  # Changed to sync
     db: Session,
     *,
     db_account: Account,
-    account_in: AccountPayload,
+    account_in: schemas.AccountUpdate, # Changed to AccountUpdate
 ) -> Account:
     """Updates an existing Account."""
     # Robuste Behandlung von accountType (kann String oder Enum sein)
@@ -90,6 +91,8 @@ def update_account(  # Changed to sync
     db_account.creditLimit = account_in.creditLimit
     db_account.offset = account_in.offset
     db_account.image = account_in.image
+    if hasattr(account_in, 'logo_path'): # Check if logo_path is in the payload
+        db_account.logo_path = account_in.logo_path
 
     # Explicitly set updatedAt from payload if provided, otherwise let onupdate handle it
     # This is crucial for LWW, as the incoming payload's timestamp must be respected if it's the "winner"

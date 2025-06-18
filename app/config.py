@@ -26,7 +26,12 @@ SECRET_KEY = "your-secret-key" # ÄNDERN SIE DAS IN EINER PRODUKTIVUMGEBUNG!
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
+# Pfad für die Speicherung von Logos
+# Standardmäßig im Backend-Verzeichnis unter data/logo_storage
+LOGO_STORAGE_PATH = os.path.join(BACKEND_BASE_DIR, os.getenv("LOGO_STORAGE_PATH", "data/logo_storage"))
+
 if __name__ == "__main__":
     print(f"Backend Base Directory: {BACKEND_BASE_DIR}")
     print(f"Tenant Database Directory: {TENANT_DATABASE_DIR}")
     print(f"SQLAlchemy Database URL: {SQLALCHEMY_DATABASE_URL}")
+    print(f"Logo Storage Path: {LOGO_STORAGE_PATH}")

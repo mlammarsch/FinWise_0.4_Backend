@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 
 # User Schemas
 class UserBase(BaseModel):
@@ -95,6 +95,9 @@ class AccountGroupSchema(AccountGroupBase):
     class Config:
         from_attributes = True
 
+class AccountGroupUpdate(AccountGroupBase):
+    logo_path: Optional[str] = None
+
 # Tenant Management Response Schemas
 class TenantDeletionResponse(BaseModel):
     message: str
@@ -138,3 +141,6 @@ class AccountSchema(AccountBase):
 
     class Config:
         from_attributes = True
+
+class AccountUpdate(AccountBase):
+    logo_path: Optional[str] = None

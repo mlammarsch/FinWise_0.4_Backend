@@ -5,8 +5,9 @@ from fastapi import WebSocket  # Added for type hinting
 # from uuid import UUID # IDs are strings now
 
 from app.models.financial_models import AccountGroup
+from app.models import schemas # Added import
 from app.websocket.schemas import (
-    AccountGroupPayload,
+    # AccountGroupPayload, # Replaced by schemas.AccountGroupUpdate
     DataUpdateNotificationMessage,
     EntityType,
     SyncOperationType,
@@ -28,7 +29,7 @@ def get_account_groups(db: Session, skip: int = 0, limit: int = 100) -> List[Acc
 def create_account_group(  # Changed to sync
     db: Session,
     *,
-    account_group_in: AccountGroupPayload,
+    account_group_in: schemas.AccountGroupPayload, # Kept AccountGroupPayload for create
     # tenant_id: str, # Removed
     # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
     # exclude_websocket: Optional[WebSocket] = None # Removed
@@ -56,7 +57,7 @@ def update_account_group(  # Changed to sync
     db: Session,
     *,
     db_account_group: AccountGroup,
-    account_group_in: AccountGroupPayload,
+    account_group_in: schemas.AccountGroupUpdate, # Changed to AccountGroupUpdate
     # tenant_id: str, # Removed
     # websocket_manager: ConnectionManager = websocket_manager_instance, # Removed
     # exclude_websocket: Optional[WebSocket] = None # Removed
@@ -65,6 +66,8 @@ def update_account_group(  # Changed to sync
     db_account_group.name = account_group_in.name
     db_account_group.sortOrder = account_group_in.sortOrder
     db_account_group.image = account_group_in.image
+    if hasattr(account_group_in, 'logo_path'): # Check if logo_path is in the payload
+        db_account_group.logo_path = account_group_in.logo_path
 
     # Explicitly set updatedAt from payload if provided, otherwise let onupdate handle it
     if account_group_in.updated_at:
