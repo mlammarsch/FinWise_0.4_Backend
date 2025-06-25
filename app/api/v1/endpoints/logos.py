@@ -20,11 +20,9 @@ MIME_TYPE_TO_EXTENSION = {
 }
 
 @router.post("/upload", response_model=dict)
-async def upload_logo(
+async def upload_image(
     file: UploadFile = File(...),
-    entity_id: str = Form(...),
-    entity_type: str = Form(...),
-    tenant_id: str = Depends(deps.get_current_tenant_id) # Adjusted based on deps.py
+    tenant_id: str = Depends(deps.get_current_tenant_id)
 ):
     """
     Uploads a logo for a given entity (account or account_group).
@@ -75,12 +73,12 @@ async def upload_logo(
 
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
-        content={"logo_path": saved_relative_path, "entity_id": entity_id, "entity_type": entity_type}
+        content={"image_url": saved_relative_path}
     )
 
-@router.delete("/logos/{logo_path:path}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_logo_endpoint(
-    logo_path: str,
+@router.delete("/images/{image_url:path}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_image_endpoint(
+    image_url: str,
     current_tenant_id: str = Depends(deps.get_current_tenant_id)
 ):
     """
@@ -88,10 +86,10 @@ async def delete_logo_endpoint(
     The path should include the tenant_id (e.g., "tenant_id/filename.ext").
     Ensures the user can only delete logos belonging to their current tenant.
     """
-    if "/" not in logo_path:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid logo path format. Expected 'tenant_id/filename.ext'.")
+    if "/" not in image_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image URL format. Expected 'tenant_id/filename.ext'.")
 
-    tenant_id_from_path = logo_path.split("/", 1)[0]
+    tenant_id_from_path = image_url.split("/", 1)[0]
 
     if tenant_id_from_path != current_tenant_id:
         raise HTTPException(
@@ -99,9 +97,7 @@ async def delete_logo_endpoint(
             detail="Forbidden: Access to this resource is denied."
         )
 
-    # The FileService's delete_logo method handles the actual file system operation
-    # and logging of errors if the file is not found or deletion fails.
-    success = file_service.delete_logo(relative_logo_path=logo_path)
+    success = file_service.delete_image(relative_image_url=image_url)
 
     if not success:
         # FileService.delete_logo logs the specific error (e.g., file not found)
@@ -115,9 +111,9 @@ async def delete_logo_endpoint(
     # No need to return a body.
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-@router.get("/logos/{logo_path:path}")
-async def get_logo(
-    logo_path: str,
+@router.get("/images/{image_url:path}")
+async def get_image(
+    image_url: str,
     current_tenant_id: str = Depends(deps.get_current_tenant_id)
 ):
     """
@@ -126,10 +122,10 @@ async def get_logo(
     Ensures the user can only access logos belonging to their current tenant.
     Returns the logo as a FileResponse with the correct MIME type.
     """
-    if "/" not in logo_path:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid logo path format. Expected 'tenant_id/filename.ext'.")
+    if "/" not in image_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image URL format. Expected 'tenant_id/filename.ext'.")
 
-    tenant_id_from_path = logo_path.split("/", 1)[0]
+    tenant_id_from_path = image_url.split("/", 1)[0]
 
     if tenant_id_from_path != current_tenant_id:
         raise HTTPException(
@@ -137,12 +133,12 @@ async def get_logo(
             detail="Forbidden: Access to this resource is denied."
         )
 
-    absolute_logo_path = file_service.get_logo_path(relative_logo_path=logo_path)
+    absolute_image_path = file_service.get_image_path(relative_image_url=image_url)
 
-    if absolute_logo_path is None or not os.path.exists(absolute_logo_path):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not found")
+    if absolute_image_path is None or not os.path.exists(absolute_image_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
 
-    _, extension = os.path.splitext(logo_path)
+    _, extension = os.path.splitext(image_url)
     extension = extension.lower()
 
     media_type: Optional[str] = None

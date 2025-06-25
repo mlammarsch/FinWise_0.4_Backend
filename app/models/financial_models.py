@@ -16,8 +16,6 @@ class AccountGroup(TenantBase):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) # Frontend sends string UUIDs
     name = Column(String, nullable=False, index=True)
     sortOrder = Column(Integer, nullable=False, default=0)
-    image = Column(String, nullable=True)
-    logo_path = Column(String, nullable=True)
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -47,8 +45,7 @@ class Account(TenantBase):
     balance = Column(Numeric(10, 2), nullable=False, default=0.0)
     creditLimit = Column(Numeric(10, 2), nullable=True, default=0.0)
     offset = Column(Integer, nullable=False, default=0) # Assuming offset is an integer
-    image = Column(String, nullable=True)
-    logo_path = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
 
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)

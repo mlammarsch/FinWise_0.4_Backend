@@ -8,17 +8,16 @@ from app.utils.logger import errorLog
 
 class FileService:
     """
-    Service for handling file operations, specifically for account logos.
+    Service for handling file operations, specifically for images.
     """
 
-    def __init__(self, base_storage_path: str = LOGO_STORAGE_PATH):
+    def __init__(self, base_storage_path: str = LOGO_STORAGE_PATH): # LOGO_STORAGE_PATH ist hier noch korrekt, da es den Pfad für Bilder angibt
         self.base_storage_path = Path(base_storage_path)
-        # Ensure the base storage directory exists
         self.base_storage_path.mkdir(parents=True, exist_ok=True)
 
-    def save_logo(self, filename: str, file_content: bytes, tenant_id: Optional[str] = None) -> Optional[str]:
+    def save_image(self, filename: str, file_content: bytes, tenant_id: Optional[str] = None) -> Optional[str]:
         """
-        Saves a logo file.
+        Saves an image file.
 
         Args:
             filename: The name of the file.
@@ -46,34 +45,34 @@ class FileService:
         except IOError as e:
             errorLog(
                 module_name="FileService",
-                message=f"Error saving logo file '{filename}' for tenant '{tenant_id}'",
+                message=f"Error saving image file '{filename}' for tenant '{tenant_id}'",
                 details=e
             )
             return None
         except Exception as e:
             errorLog(
                 module_name="FileService",
-                message=f"An unexpected error occurred while saving logo file '{filename}' for tenant '{tenant_id}'",
+                message=f"An unexpected error occurred while saving image file '{filename}' for tenant '{tenant_id}'",
                 details=e
             )
             return None
 
-    def delete_logo(self, relative_logo_path: str) -> bool:
+    def delete_image(self, relative_image_url: str) -> bool:
         """
-        Deletes a logo file.
+        Deletes an image file.
 
         Args:
-            relative_logo_path: The relative path to the logo file (e.g., "tenant_id/filename" or "filename").
+            relative_image_url: The relative path to the image file (e.g., "tenant_id/filename" or "filename").
 
         Returns:
             True if deletion was successful, False otherwise.
         """
         try:
-            full_path = self.base_storage_path / relative_logo_path
+            full_path = self.base_storage_path / relative_image_url
             if not full_path.exists():
                 errorLog(
                     module_name="FileService",
-                    message=f"Logo file not found for deletion: '{relative_logo_path}' (Full path: {full_path})",
+                    message=f"Image file not found for deletion: '{relative_image_url}' (Full path: {full_path})",
                 )
                 return False
 
@@ -82,35 +81,35 @@ class FileService:
         except FileNotFoundError:
             errorLog(
                 module_name="FileService",
-                message=f"Logo file not found for deletion: '{relative_logo_path}'",
+                message=f"Image file not found for deletion: '{relative_image_url}'",
             )
             return False
         except IOError as e:
             errorLog(
                 module_name="FileService",
-                message=f"Error deleting logo file '{relative_logo_path}'",
+                message=f"Error deleting image file '{relative_image_url}'",
                 details=e
             )
             return False
         except Exception as e:
             errorLog(
                 module_name="FileService",
-                message=f"An unexpected error occurred while deleting logo file '{relative_logo_path}'",
+                message=f"An unexpected error occurred while deleting image file '{relative_image_url}'",
                 details=e
             )
             return False
 
-    def get_logo_path(self, relative_logo_path: str) -> Optional[str]:
+    def get_image_path(self, relative_image_url: str) -> Optional[str]:
         """
-        Gets the full absolute path to a logo file.
+        Gets the full absolute path to an image file.
 
         Args:
-            relative_logo_path: The relative path to the logo file (e.g., "tenant_id/filename" or "filename").
+            relative_image_url: The relative path to the image file (e.g., "tenant_id/filename" or "filename").
 
         Returns:
-            The full absolute path to the logo file, or None if the file does not exist.
+            The full absolute path to the image file, or None if the file does not exist.
         """
-        full_path = self.base_storage_path / relative_logo_path
+        full_path = self.base_storage_path / relative_image_url
         if full_path.exists() and full_path.is_file():
             return str(full_path.resolve())
         return None
