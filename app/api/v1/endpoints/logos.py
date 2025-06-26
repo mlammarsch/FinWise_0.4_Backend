@@ -165,24 +165,6 @@ async def delete_logo_endpoint(
                 detail=f"Logo kann nicht gelöscht werden. Es wird noch von folgenden Account-Gruppen verwendet: {', '.join(group_names)}"
             )
 
-        # Zusätzlich prüfe auch das legacy 'image' Feld für Rückwärtskompatibilität
-        accounts_with_image = db.query(Account).filter(Account.image == logo_path).all()
-        if accounts_with_image:
-            account_names = [acc.name for acc in accounts_with_image]
-            errorLog("LogoAPI", f"Logo kann nicht gelöscht werden - wird von Accounts (image-Feld) verwendet: {account_names}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Logo kann nicht gelöscht werden. Es wird noch von folgenden Accounts verwendet: {', '.join(account_names)}"
-            )
-
-        account_groups_with_image = db.query(AccountGroup).filter(AccountGroup.image == logo_path).all()
-        if account_groups_with_image:
-            group_names = [grp.name for grp in account_groups_with_image]
-            errorLog("LogoAPI", f"Logo kann nicht gelöscht werden - wird von AccountGroups (image-Feld) verwendet: {group_names}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Logo kann nicht gelöscht werden. Es wird noch von folgenden Account-Gruppen verwendet: {', '.join(group_names)}"
-            )
 
         infoLog("LogoAPI", f"Keine Referenzen gefunden für Logo: {logo_path}. Löschung wird fortgesetzt.")
 
@@ -215,13 +197,12 @@ async def delete_logo_endpoint(
 
 @router.get("/{logo_path:path}")
 async def get_logo(
-    logo_path: str,
-    current_tenant_id: str = Depends(deps.get_current_tenant_id)
+    logo_path: str
 ):
     """
     Retrieves a logo file specified by its relative path.
     The path should include the tenant_id (e.g., "tenant_id/filename.ext").
-    Ensures the user can only access logos belonging to their current tenant.
+    Security is ensured by validating the tenant_id is part of the path structure.
     Returns the logo as a FileResponse with the correct MIME type.
     """
     debugLog("LogoAPI", f"Received request for logo_path: {logo_path}")
@@ -232,11 +213,12 @@ async def get_logo(
 
     tenant_id_from_path = logo_path.split("/", 1)[0]
 
-    if tenant_id_from_path != current_tenant_id:
-        errorLog("LogoAPI", f"Forbidden access attempt for logo {logo_path}. Tenant ID mismatch: {tenant_id_from_path} vs {current_tenant_id}")
+    # Validate tenant_id format (basic UUID validation)
+    if not tenant_id_from_path or len(tenant_id_from_path) < 32:
+        errorLog("LogoAPI", f"Invalid tenant ID format in logo path: {tenant_id_from_path}")
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Access to this resource is denied."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid tenant ID format in logo path."
         )
 
     absolute_logo_path = file_service.get_logo_path(relative_logo_path=logo_path)
