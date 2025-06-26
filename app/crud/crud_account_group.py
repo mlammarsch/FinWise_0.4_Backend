@@ -39,7 +39,7 @@ def create_account_group(  # Changed to sync
         id=account_group_in.id,  # Use the ID from payload
         name=account_group_in.name,
         sortOrder=account_group_in.sortOrder,
-        image=account_group_in.image,
+        logo_path=account_group_in.logo_path,
         # createdAt has a default
         # updatedAt will be set explicitly if provided, otherwise model default
         updatedAt=account_group_in.updated_at if account_group_in.updated_at else datetime.utcnow()
@@ -65,7 +65,6 @@ def update_account_group(  # Changed to sync
     """Updates an existing AccountGroup."""
     db_account_group.name = account_group_in.name
     db_account_group.sortOrder = account_group_in.sortOrder
-    db_account_group.image = account_group_in.image
     if hasattr(account_group_in, 'logo_path'): # Check if logo_path is in the payload
         db_account_group.logo_path = account_group_in.logo_path
 
