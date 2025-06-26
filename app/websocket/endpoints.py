@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from fastapi.encoders import jsonable_encoder
 
 from app.api import deps
+from app.api.deps import set_current_tenant_id
 from app.websocket.connection_manager import manager
 # from app.models.user_tenant_models import User # Not directly used in this endpoint for now
 from app.websocket.schemas import (
@@ -25,10 +26,13 @@ async def websocket_endpoint(
     # current_user: User = Depends(deps.get_current_active_user), # Vorerst auskommentiert
     # db: Session = Depends(deps.get_db) # Vorerst auskommentiert
 ):
+    # Set the tenant ID in the context for this WebSocket connection
+    set_current_tenant_id(tenant_id)
+
     await manager.connect(websocket, tenant_id)
     debugLog(
         "WebSocketEndpoints",
-        f"WebSocket connected for tenant: {tenant_id}",
+        f"WebSocket connected for tenant: {tenant_id} (context set)",
         details={"tenant_id": tenant_id, "client_host": websocket.client.host if websocket.client else "Unknown"}
     )
     try:
