@@ -29,13 +29,19 @@ async def upload_logo(
     file: UploadFile = File(...),
     entity_id: str = Form(...),
     entity_type: str = Form(...),
-    tenant_id: str = Depends(deps.get_current_tenant_id) # Adjusted based on deps.py
+    tenant_id: str = Form(...)
 ):
     """
     Uploads a logo for a given entity (account or account_group).
     Validates file type (PNG/JPG) and saves the file with a unique name
     under the tenant's directory.
     """
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant ID is required."
+        )
+
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

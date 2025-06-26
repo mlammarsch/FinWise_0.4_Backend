@@ -21,8 +21,10 @@ def get_current_tenant_id_from_context() -> str:
     try:
         return current_tenant_context.get()
     except LookupError:
-        # Fallback für den Fall, dass kein Context gesetzt ist
-        return "tenant_test_001"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant-ID nicht im Kontext gefunden. Sie muss explizit übergeben werden."
+        )
 
 async def get_current_tenant_id() -> str:
     """
