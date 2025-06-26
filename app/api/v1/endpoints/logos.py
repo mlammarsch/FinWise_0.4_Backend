@@ -118,7 +118,7 @@ async def upload_logo(
         content={"logo_path": saved_relative_path, "entity_id": entity_id, "entity_type": entity_type}
     )
 
-@router.delete("/logos/{logo_path:path}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{logo_path:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_logo_endpoint(
     logo_path: str,
     current_tenant_id: str = Depends(deps.get_current_tenant_id),
@@ -213,7 +213,7 @@ async def delete_logo_endpoint(
     # No need to return a body.
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-@router.get("/logos/{logo_path:path}")
+@router.get("/{logo_path:path}")
 async def get_logo(
     logo_path: str,
     current_tenant_id: str = Depends(deps.get_current_tenant_id)
@@ -224,12 +224,16 @@ async def get_logo(
     Ensures the user can only access logos belonging to their current tenant.
     Returns the logo as a FileResponse with the correct MIME type.
     """
+    debugLog("LogoAPI", f"Received request for logo_path: {logo_path}")
+
     if "/" not in logo_path:
+        errorLog("LogoAPI", f"Invalid logo path format received: {logo_path}. Missing '/'")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid logo path format. Expected 'tenant_id/filename.ext'.")
 
     tenant_id_from_path = logo_path.split("/", 1)[0]
 
     if tenant_id_from_path != current_tenant_id:
+        errorLog("LogoAPI", f"Forbidden access attempt for logo {logo_path}. Tenant ID mismatch: {tenant_id_from_path} vs {current_tenant_id}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Access to this resource is denied."
@@ -238,17 +242,19 @@ async def get_logo(
     absolute_logo_path = file_service.get_logo_path(relative_logo_path=logo_path)
 
     if absolute_logo_path is None or not os.path.exists(absolute_logo_path):
+        errorLog("LogoAPI", f"Logo file not found or path invalid: {absolute_logo_path} for requested path {logo_path}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not found")
 
     _, extension = os.path.splitext(logo_path)
     extension = extension.lower()
 
-    media_type: Optional[str] = None
+    media_type: str
     if extension == ".png":
         media_type = "image/png"
     elif extension in [".jpg", ".jpeg"]:
         media_type = "image/jpeg"
     else:
-        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
+        errorLog("LogoAPI", f"Unknown file extension for logo: {extension}. Defaulting to application/octet-stream.")
+        media_type = "application/octet-stream" # Generic binary file type
 
-    return FileResponse(path=absolute_logo_path, media_type=media_type)
+    return FileResponse(absolute_logo_path, media_type=media_type)
