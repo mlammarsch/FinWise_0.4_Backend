@@ -81,7 +81,7 @@ class UserSettingsSyncPayload(UserSettingsBase):
 class AccountGroupBase(BaseModel):
     name: str
     sortOrder: int | None = 0
-    image: str | None = None
+    logo_path: str | None = None
 
 class AccountGroupPayload(AccountGroupBase):
     id: str | None = None
@@ -128,7 +128,7 @@ class AccountBase(BaseModel):
     balance: Decimal | None = Decimal('0.0')
     creditLimit: Decimal | None = Decimal('0.0')
     offset: int | None = 0
-    image: str | None = None
+    logo_path: str | None = None
 
 class AccountPayload(AccountBase):
     id: str | None = None
