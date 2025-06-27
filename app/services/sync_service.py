@@ -10,7 +10,7 @@ from app.websocket.schemas import (
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
 from app.models.financial_models import TenantBase, Account, AccountGroup, Category, CategoryGroup, Recipient, Tag, AutomationRule, PlanningTransaction, Transaction  # Import all models
 from app.crud import crud_account, crud_account_group, crud_category, crud_category_group, crud_recipient, crud_tag, crud_automation_rule, crud_planning_transaction, crud_transaction
-from app.utils.logger import infoLog, errorLog, debugLog
+from app.utils.logger import infoLog, errorLog, debugLog, warnLog
 from app.websocket.connection_manager import manager as websocket_manager_instance  # Import the global manager
 from datetime import datetime  # Import datetime for comparison
 import sqlite3  # Import sqlite3 to catch specific operational errors
@@ -677,6 +677,15 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
             error_reason = "table_not_found"
         errorLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(oe), "reason": error_reason})
         return False, error_reason
+    except RuntimeError as e:
+        if "Unexpected ASGI message 'websocket.send'" in str(e):
+            error_msg = f"WebSocket state error processing sync entry {entry.id} for tenant {entry.tenantId}: {e}"
+            warnLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(e)})
+            return False, "websocket_state_error"
+        else:
+            error_msg = f"Unhandled RuntimeError processing sync entry {entry.id} for tenant {entry.tenantId}: {e}"
+            errorLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(e)})
+            return False, "generic_runtime_error"
     except Exception as e:
         error_msg = f"Generic error processing sync entry {entry.id} for tenant {entry.tenantId}: {str(e)}"
         errorLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(e)})
@@ -793,7 +802,7 @@ async def get_data_status_for_tenant(tenant_id: str, entity_types: Optional[list
                         'balance': float(account.balance) if account.balance else 0.0,
                         'creditLimit': float(account.creditLimit) if account.creditLimit else None,
                         'offset': account.offset,
-                        'image': account.image,
+                        'logo_path': account.logo_path,
                         'updated_at': account.updatedAt.isoformat() if account.updatedAt else None
                     }
                     checksum = calculate_entity_checksum(account_data)
@@ -812,7 +821,7 @@ async def get_data_status_for_tenant(tenant_id: str, entity_types: Optional[list
                         'id': group.id,
                         'name': group.name,
                         'sortOrder': group.sortOrder,
-                        'image': group.image,
+                        'logo_path': group.logo_path,
                         'updated_at': group.updatedAt.isoformat() if group.updatedAt else None
                     }
                     checksum = calculate_entity_checksum(group_data)

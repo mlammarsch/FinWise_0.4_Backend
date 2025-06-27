@@ -165,11 +165,19 @@ async def websocket_endpoint(
 
                     except Exception as proc_e: # Catch errors during processing
                         error_detail_for_client = f"Error processing sync entry: {str(proc_e)}"
-                        errorLog(
-                            "WebSocketEndpoints",
-                            f"Error processing sync_entry message for tenant {tenant_id}: {str(proc_e)}",
-                            details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
-                        )
+                        # Use warnLog for expected processing issues, errorLog for unexpected crashes
+                        if "websocket_state_error" in str(proc_e) or "db_locked" in str(proc_e):
+                            warnLog(
+                                "WebSocketEndpoints",
+                                f"Recoverable error processing sync_entry for tenant {tenant_id}: {str(proc_e)}",
+                                details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
+                            )
+                        else:
+                            errorLog(
+                                "WebSocketEndpoints",
+                                f"Critical error processing sync_entry for tenant {tenant_id}: {str(proc_e)}",
+                                details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
+                            )
                         # Send NACK for general processing error
                         try: # Try to get entry details for NACK
                             sync_entry_message_for_nack = ProcessSyncEntryMessage(**message_data)

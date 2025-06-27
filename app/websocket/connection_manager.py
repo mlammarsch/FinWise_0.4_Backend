@@ -197,26 +197,20 @@ class ConnectionManager:
                 debugLog("ConnectionManager", f"Heartbeat-Check für {len(all_websockets)} Verbindungen",
                          details={"connection_count": len(all_websockets), "tenant_count": len(self.active_connections)})
 
-                ping_tasks = [ws.ping() for ws in all_websockets]
-                ping_results = await asyncio.gather(*ping_tasks, return_exceptions=True)
-
-                for ws, result in zip(all_websockets, ping_results):
-                    if isinstance(result, Exception) or result is False:
+                ping_message = {"type": "ping", "timestamp": asyncio.get_event_loop().time()}
+                for ws in all_websockets:
+                    try:
+                        await ws.send_json(ping_message)
+                    except Exception as e:
                         tenant_id = websocket_to_tenant.get(ws)
                         if tenant_id:
-                            warnLog("ConnectionManager", f"Ungesunde WebSocket-Verbindung erkannt für Tenant {tenant_id}. Ergebnis: {result}",
-                                    details={"tenant_id": tenant_id, "client": ws.client.host if ws.client else "Unknown", "ping_result": str(result)})
-                            self.disconnect(ws, tenant_id, reason=f"Heartbeat failed: {result}")
+                            warnLog("ConnectionManager", f"Fehler beim Senden des Pings an WebSocket für Tenant {tenant_id}: {e}",
+                                    details={"tenant_id": tenant_id, "client": ws.client.host if ws.client else "Unknown", "error": str(e)})
+                            self.disconnect(ws, tenant_id, reason=f"Ping send failed: {e}")
                             try:
                                 await ws.close(code=1001)
-                                infoLog("ConnectionManager", f"Explicitly closed unhealthy WebSocket for tenant {tenant_id}",
-                                        details={"tenant_id": tenant_id, "client": ws.client.host if ws.client else "Unknown"})
-                            except RuntimeError as rt_error:
-                                warnLog("ConnectionManager", f"RuntimeError while closing unhealthy WebSocket for tenant {tenant_id}: {rt_error}",
-                                        details={"tenant_id": tenant_id, "client": ws.client.host if ws.client else "Unknown"})
-                            except Exception as close_exc:
-                                errorLog("ConnectionManager", f"Exception while closing unhealthy WebSocket for tenant {tenant_id}: {close_exc}",
-                                         details={"tenant_id": tenant_id, "client": ws.client.host if ws.client else "Unknown", "error": str(close_exc)})
+                            except Exception:
+                                pass # Ignore errors on close, as the connection is already likely dead
             except asyncio.CancelledError:
                 infoLog("ConnectionManager", "Heartbeat-Loop wurde abgebrochen")
                 break
