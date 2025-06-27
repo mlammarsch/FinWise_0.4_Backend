@@ -35,8 +35,8 @@ class UserSettings(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.uuid"), nullable=False, unique=True)
-    log_level = Column(String, nullable=False, default="INFO")
-    enabled_log_categories = Column(Text, nullable=False, default='["store", "ui", "service"]')  # JSON string
+    log_level = Column(String, nullable=False, default="DEBUG")
+    log_categories = Column(Text, nullable=False, default='["store", "ui", "service"]')  # JSON string
     history_retention_days = Column(Integer, nullable=False, default=60)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -21,12 +21,12 @@ def create_user_settings(db: Session, *, settings_in: UserSettingsCreate) -> Use
     debugLog(MODULE_NAME, f"Erstelle Settings für User {settings_in.user_id}")
 
     # Convert list to JSON string for database storage
-    enabled_categories_json = json.dumps(settings_in.enabled_log_categories)
+    log_categories_json = json.dumps(settings_in.log_categories)
 
     db_settings = UserSettings(
         user_id=settings_in.user_id,
-        log_level=settings_in.log_level,
-        enabled_log_categories=enabled_categories_json,
+        log_level=settings_in.log_level.value,
+        log_categories=log_categories_json,
         history_retention_days=settings_in.history_retention_days,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
@@ -67,11 +67,11 @@ def update_user_settings(
             return db_obj
 
     # Convert list to JSON string for database storage
-    enabled_categories_json = json.dumps(obj_in.enabled_log_categories)
+    log_categories_json = json.dumps(obj_in.log_categories)
 
     # Update fields
-    db_obj.log_level = obj_in.log_level
-    db_obj.enabled_log_categories = enabled_categories_json
+    db_obj.log_level = obj_in.log_level.value
+    db_obj.log_categories = log_categories_json
     db_obj.history_retention_days = obj_in.history_retention_days
 
     # Stelle sicher, dass updated_at als naiver UTC-Timestamp gespeichert wird
@@ -102,7 +102,7 @@ def sync_user_settings(
         # Update existing settings
         update_data = UserSettingsUpdate(
             log_level=settings_payload.log_level,
-            enabled_log_categories=settings_payload.enabled_log_categories,
+            log_categories=settings_payload.log_categories,
             history_retention_days=settings_payload.history_retention_days,
             updated_at=settings_payload.updated_at
         )
@@ -112,7 +112,7 @@ def sync_user_settings(
         create_data = UserSettingsCreate(
             user_id=user_id,
             log_level=settings_payload.log_level,
-            enabled_log_categories=settings_payload.enabled_log_categories,
+            log_categories=settings_payload.log_categories,
             history_retention_days=settings_payload.history_retention_days
         )
         return create_user_settings(db, settings_in=create_data)
@@ -126,21 +126,21 @@ def get_user_settings_as_dict(db: Session, user_id: str) -> Optional[dict]:
 
     try:
         # Parse JSON string back to list
-        enabled_categories = json.loads(settings.enabled_log_categories)
+        log_categories = json.loads(settings.log_categories)
     except (json.JSONDecodeError, TypeError):
         # Fallback to default if JSON parsing fails
-        enabled_categories = ["store", "ui", "service"]
+        log_categories = ["store", "ui", "service"]
         errorLog(
             MODULE_NAME,
-            f"Fehler beim Parsen der enabled_log_categories für User {user_id}",
-            details={"raw_value": settings.enabled_log_categories}
+            f"Fehler beim Parsen der log_categories für User {user_id}",
+            details={"raw_value": settings.log_categories}
         )
 
     return {
         "id": settings.id,
         "user_id": settings.user_id,
         "log_level": settings.log_level,
-        "enabled_log_categories": enabled_categories,
+        "log_categories": log_categories,
         "history_retention_days": settings.history_retention_days,
         "created_at": settings.created_at,
         "updated_at": settings.updated_at
@@ -154,7 +154,7 @@ def create_default_user_settings(db: Session, user_id: str) -> UserSettings:
     default_settings = UserSettingsCreate(
         user_id=user_id,
         log_level="INFO",
-        enabled_log_categories=["store", "ui", "service"],
+        log_categories=["store", "ui", "service"],
         history_retention_days=60
     )
 

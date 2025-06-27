@@ -1,3 +1,4 @@
+import enum
 from pydantic import BaseModel, EmailStr
 import uuid
 from datetime import datetime
@@ -53,9 +54,15 @@ class Tenant(TenantBase):
         from_attributes = True
 
 # UserSettings Schemas
+class LogLevel(str, enum.Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARN = "WARN"
+    ERROR = "ERROR"
+
 class UserSettingsBase(BaseModel):
-    log_level: str = "INFO"
-    enabled_log_categories: List[str] = ["store", "ui", "service"]
+    log_level: LogLevel = LogLevel.INFO
+    log_categories: List[str] = ["store", "ui", "service"]
     history_retention_days: int = 60
 
 class UserSettingsCreate(UserSettingsBase):
