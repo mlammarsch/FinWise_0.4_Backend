@@ -8,3 +8,6 @@ debug.log
 *.tmp
 cache/
 *.pyc
+*.png
+*.svc
+*.jpg

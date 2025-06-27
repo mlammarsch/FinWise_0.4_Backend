@@ -137,7 +137,8 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
             if operation_type == SyncOperationType.CREATE:
                 existing_group = crud_account_group.get_account_group(db=db, account_group_id=entity_id)
                 if existing_group:  # Treat as update
-                    if incoming_updated_at and existing_group.updatedAt and incoming_updated_at > existing_group.updatedAt:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(existing_group.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
                         updated_group = crud_account_group.update_account_group(db=db, db_account_group=existing_group, account_group_in=payload)
                         infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for AccountGroup {entity_id}", details=payload)
                         notification_data = AccountGroupPayload.model_validate(updated_group)
@@ -162,7 +163,8 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     return False, error_msg
                 db_account_group = crud_account_group.get_account_group(db=db, account_group_id=entity_id)
                 if db_account_group:
-                    if incoming_updated_at and db_account_group.updatedAt and incoming_updated_at > db_account_group.updatedAt:
+                    normalized_db_updated_at = normalize_datetime_for_comparison(db_account_group.updatedAt)
+                    if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
                         updated_group = crud_account_group.update_account_group(db=db, db_account_group=db_account_group, account_group_in=payload)
                         infoLog(MODULE_NAME, f"Updated AccountGroup {entity_id} (LWW win)", details=payload)
                         notification_data = AccountGroupPayload.model_validate(updated_group)

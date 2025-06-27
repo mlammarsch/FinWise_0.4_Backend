@@ -176,37 +176,6 @@ class ConnectionManager:
         await self.broadcast_json_to_all(status_message.model_dump())
         debugLog("ConnectionManager", f"Broadcasted backend status: {status}", details={"status": status})
 
-    async def send_ping(self, websocket: WebSocket) -> bool:
-        debugLog("ConnectionManager", f"Executing send_ping for websocket type: {type(websocket)}", details={"websocket_object_id": id(websocket), "client_host": websocket.client.host if websocket.client else "Unknown"})
-        try:
-            if hasattr(websocket, 'ping'):
-                await websocket.ping()
-            else:
-                errorLog("ConnectionManager", f"WebSocket object of type {type(websocket)} has no 'ping' attribute.",
-                         details={"client": websocket.client.host if websocket.client else "Unknown"})
-                self.connection_health[websocket] = False
-                return False
-
-            await asyncio.wait_for(websocket.receive_bytes(timeout=self.ping_timeout), timeout=self.ping_timeout + 1)
-            self.connection_health[websocket] = True
-            debugLog("ConnectionManager", f"Ping successful, Pong presumed for {websocket.client.host if websocket.client else 'Unknown'}")
-            return True
-        except asyncio.TimeoutError:
-            warnLog(
-                "ConnectionManager",
-                "Pong not received within timeout after sending ping",
-                details={"client": websocket.client.host if websocket.client else "Unknown", "timeout": self.ping_timeout}
-            )
-            self.connection_health[websocket] = False
-            return False
-        except Exception as e:
-            errorLog(
-                "ConnectionManager",
-                "Fehler beim Ping-Versand oder Pong-Empfang",
-                details={"client": websocket.client.host if websocket.client else "Unknown", "error_type": type(e).__name__, "error": str(e)}
-            )
-            self.connection_health[websocket] = False
-            return False
 
     async def _heartbeat_loop(self):
         infoLog("ConnectionManager", "Heartbeat-Loop gestartet")
@@ -228,7 +197,7 @@ class ConnectionManager:
                 debugLog("ConnectionManager", f"Heartbeat-Check für {len(all_websockets)} Verbindungen",
                          details={"connection_count": len(all_websockets), "tenant_count": len(self.active_connections)})
 
-                ping_tasks = [self.send_ping(ws) for ws in all_websockets]
+                ping_tasks = [ws.ping() for ws in all_websockets]
                 ping_results = await asyncio.gather(*ping_tasks, return_exceptions=True)
 
                 for ws, result in zip(all_websockets, ping_results):

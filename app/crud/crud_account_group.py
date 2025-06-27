@@ -15,7 +15,7 @@ from app.websocket.schemas import (
     ServerEventType
 )
 from app.websocket.connection_manager import ConnectionManager, manager as websocket_manager_instance  # Use the global manager instance
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def get_account_group(db: Session, account_group_id: str) -> Optional[AccountGroup]:
@@ -42,7 +42,7 @@ def create_account_group(  # Changed to sync
         logo_path=account_group_in.logo_path,
         # createdAt has a default
         # updatedAt will be set explicitly if provided, otherwise model default
-        updatedAt=account_group_in.updated_at if account_group_in.updated_at else datetime.utcnow()
+        updatedAt=account_group_in.updated_at if account_group_in.updated_at else datetime.now(timezone.utc)
     )
     db.add(db_account_group)
     db.commit()
