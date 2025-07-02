@@ -91,7 +91,7 @@ class AccountPayload(BaseModel):
     balance: float # Assuming balance can be float
     creditLimit: Optional[float] = None # Assuming creditLimit can be float
     offset: int # Assuming offset is an integer
-    image: Optional[str] = None
+    logo_path: Optional[str] = None
     updated_at: Optional[datetime.datetime] = None
 
     @validator('accountType', pre=True, always=True)
@@ -120,7 +120,7 @@ class AccountGroupPayload(BaseModel):
     id: str # UUID as string from frontend
     name: str
     sortOrder: int
-    image: Optional[str] = None
+    logo_path: Optional[str] = None
     updated_at: Optional[datetime.datetime] = None
 
     class Config:

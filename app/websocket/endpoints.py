@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from fastapi.encoders import jsonable_encoder
 
 from app.api import deps
+from app.api.deps import set_current_tenant_id
 from app.websocket.connection_manager import manager
 # from app.models.user_tenant_models import User # Not directly used in this endpoint for now
 from app.websocket.schemas import (
@@ -25,10 +26,13 @@ async def websocket_endpoint(
     # current_user: User = Depends(deps.get_current_active_user), # Vorerst auskommentiert
     # db: Session = Depends(deps.get_db) # Vorerst auskommentiert
 ):
+    # Set the tenant ID in the context for this WebSocket connection
+    set_current_tenant_id(tenant_id)
+
     await manager.connect(websocket, tenant_id)
     debugLog(
         "WebSocketEndpoints",
-        f"WebSocket connected for tenant: {tenant_id}",
+        f"WebSocket connected for tenant: {tenant_id} (context set)",
         details={"tenant_id": tenant_id, "client_host": websocket.client.host if websocket.client else "Unknown"}
     )
     try:
@@ -161,11 +165,19 @@ async def websocket_endpoint(
 
                     except Exception as proc_e: # Catch errors during processing
                         error_detail_for_client = f"Error processing sync entry: {str(proc_e)}"
-                        errorLog(
-                            "WebSocketEndpoints",
-                            f"Error processing sync_entry message for tenant {tenant_id}: {str(proc_e)}",
-                            details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
-                        )
+                        # Use warnLog for expected processing issues, errorLog for unexpected crashes
+                        if "websocket_state_error" in str(proc_e) or "db_locked" in str(proc_e):
+                            warnLog(
+                                "WebSocketEndpoints",
+                                f"Recoverable error processing sync_entry for tenant {tenant_id}: {str(proc_e)}",
+                                details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
+                            )
+                        else:
+                            errorLog(
+                                "WebSocketEndpoints",
+                                f"Critical error processing sync_entry for tenant {tenant_id}: {str(proc_e)}",
+                                details={"tenant_id": tenant_id, "error": str(proc_e), "data": data[:200]}
+                            )
                         # Send NACK for general processing error
                         try: # Try to get entry details for NACK
                             sync_entry_message_for_nack = ProcessSyncEntryMessage(**message_data)

@@ -1,19 +1,38 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
+import contextvars
 
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
 
-# TODO: Implement actual JWT token decoding and tenant_id extraction
+# Context variable to store the current tenant_id
+current_tenant_context: contextvars.ContextVar[str] = contextvars.ContextVar('current_tenant_id')
+
+def set_current_tenant_id(tenant_id: str):
+    """
+    Setzt die aktuelle Tenant-ID im Context.
+    Wird von WebSocket-Endpunkten und anderen Services verwendet.
+    """
+    current_tenant_context.set(tenant_id)
+
+def get_current_tenant_id_from_context() -> str:
+    """
+    Holt die aktuelle Tenant-ID aus dem Context.
+    """
+    try:
+        return current_tenant_context.get()
+    except LookupError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant-ID nicht im Kontext gefunden. Sie muss explizit übergeben werden."
+        )
+
 async def get_current_tenant_id() -> str:
     """
-    Platzhalter-Dependency, um die tenant_id des aktuellen Benutzers zu erhalten.
-    MUSS durch eine echte Authentifizierungslogik ersetzt werden,
-    die die tenant_id z.B. aus einem JWT-Token extrahiert.
+    Dependency, um die tenant_id des aktuellen Benutzers zu erhalten.
+    Versucht zuerst die Tenant-ID aus dem Context zu holen,
+    falls das fehlschlägt, wird ein Fallback-Wert verwendet.
     """
-    # Für Testzwecke wird eine feste tenant_id zurückgegeben.
-    # In einer realen Anwendung würde hier die tenant_id aus dem
-    # authentifizierten Benutzerkontext (z.B. JWT-Token) extrahiert.
-    return "tenant_test_001"
+    return get_current_tenant_id_from_context()
 
 async def get_tenant_db_session(
     tenant_id: str = Depends(get_current_tenant_id)

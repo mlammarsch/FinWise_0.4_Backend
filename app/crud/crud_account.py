@@ -43,7 +43,7 @@ def create_account(  # Changed to sync, WebSocket logic moved to service layer
         balance=account_in.balance,
         creditLimit=account_in.creditLimit,
         offset=account_in.offset,
-        image=account_in.image,
+        logo_path=account_in.logo_path,
         # createdAt has a default
         # updatedAt will be set explicitly if provided, otherwise model default
         updatedAt=account_in.updated_at if account_in.updated_at else datetime.utcnow(),
@@ -90,7 +90,6 @@ def update_account(  # Changed to sync
     db_account.balance = account_in.balance
     db_account.creditLimit = account_in.creditLimit
     db_account.offset = account_in.offset
-    db_account.image = account_in.image
     if hasattr(account_in, 'logo_path'): # Check if logo_path is in the payload
         db_account.logo_path = account_in.logo_path
 

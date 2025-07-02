@@ -16,6 +16,7 @@ class AccountGroup(TenantBase):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) # Frontend sends string UUIDs
     name = Column(String, nullable=False, index=True)
     sortOrder = Column(Integer, nullable=False, default=0)
+    logo_path = Column(String, nullable=True)
     # Timestamps
     createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

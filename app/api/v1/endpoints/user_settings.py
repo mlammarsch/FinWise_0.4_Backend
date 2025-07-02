@@ -55,8 +55,8 @@ def sync_user_settings(
         MODULE_NAME,
         f"API-Request: Synchronisiere Settings für User {user_id}",
         details={
-            "log_level": settings_payload.log_level,
-            "categories_count": len(settings_payload.enabled_log_categories),
+            "log_level": settings_payload.log_level.value,
+            "categories_count": len(settings_payload.log_categories),
             "retention_days": settings_payload.history_retention_days,
             "updated_at": settings_payload.updated_at.isoformat() if settings_payload.updated_at else None
         }

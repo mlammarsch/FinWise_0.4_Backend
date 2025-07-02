@@ -112,7 +112,12 @@ class FileService:
         full_path = self.base_storage_path / relative_logo_path
         if full_path.exists() and full_path.is_file():
             return str(full_path.resolve())
-        return None
+        else:
+            errorLog(
+                module_name="FileService",
+                message=f"Logo file not found at expected path: {full_path}. Relative path: {relative_logo_path}",
+            )
+            return None
 
 # Example Usage (for testing purposes, can be removed)
 if __name__ == "__main__":
