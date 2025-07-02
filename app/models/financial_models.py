@@ -3,7 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.postgresql import UUID # Using PostgreSQL UUID type for compatibility, can be adapted
 import uuid # For default UUID generation
-from datetime import datetime
+from datetime import datetime, timezone
 
 # It's common to have a Base for all models in a specific DB or context.
 # If user_tenant_models.py uses a different Base, ensure they don't conflict
@@ -17,8 +17,8 @@ class AccountGroup(TenantBase):
     name = Column(String, nullable=False, index=True)
     sortOrder = Column(Integer, nullable=False, default=0)
     # Timestamps
-    createdAt = Column(DateTime, default=datetime.utcnow)
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationship to Accounts
     accounts = relationship("Account", back_populates="account_group")
@@ -45,7 +45,7 @@ class Account(TenantBase):
     balance = Column(Numeric(10, 2), nullable=False, default=0.0)
     creditLimit = Column(Numeric(10, 2), nullable=True, default=0.0)
     offset = Column(Integer, nullable=False, default=0) # Assuming offset is an integer
-    image_url = Column(String, nullable=True)
+    logo_path = Column(String, nullable=True)
 
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)

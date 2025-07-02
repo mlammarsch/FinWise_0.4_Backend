@@ -81,7 +81,7 @@ class UserSettingsSyncPayload(UserSettingsBase):
 class AccountGroupBase(BaseModel):
     name: str
     sortOrder: int | None = 0
-    image_url: str | None = None
+    logo_path: str | None = None
 
 class AccountGroupPayload(AccountGroupBase):
     id: str | None = None

@@ -46,7 +46,7 @@ async def upload_image(
             "original_filename": file.filename
         })
 
-        return JSONResponse(content={"image_url": file_path}, status_code=200)
+        return JSONResponse(content={"logo_path": file_path}, status_code=200)
 
     except Exception as e:
         errorLog("ImageUpload", "Fehler beim Hochladen des Bildes", {
