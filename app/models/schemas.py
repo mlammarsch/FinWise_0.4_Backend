@@ -122,11 +122,27 @@ class SyncQueueClearResponse(BaseModel):
     entries_cleared: int = 0
 
 # Account Schemas
+class AccountType(str, enum.Enum):
+    Girokonto = 'giro'
+    Tagesgeldkonto = 'tagesgeld'
+    Festgeldkonto = 'festgeld'
+    Sparkonto = 'spar'
+    Kreditkarte = 'kreditkarte'
+    Depot = 'depot'
+    Bausparvertrag = 'bauspar'
+    Darlehenskonto = 'darlehen'
+    Geschäftskonto = 'geschaeft'
+    Gemeinschaftskonto = 'gemeinschaft'
+    Fremdwährungskonto = 'fremdwaehrung'
+    Virtuell = 'virtuell'
+    Bargeld = 'bar'
+    Sonstiges = 'sonstiges'
+
 class AccountBase(BaseModel):
     name: str
     description: str | None = None
     note: str | None = None
-    accountType: str
+    accountType: AccountType
     isActive: bool | None = True
     isOfflineBudget: bool | None = False
     accountGroupId: str

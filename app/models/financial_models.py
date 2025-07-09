@@ -1,14 +1,31 @@
-from sqlalchemy import Column, String, Boolean, Integer, Float, ForeignKey, DateTime, Text, Numeric, JSON
+from sqlalchemy import Column, String, Boolean, Integer, Float, ForeignKey, DateTime, Text, Numeric, JSON, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.postgresql import UUID # Using PostgreSQL UUID type for compatibility, can be adapted
 import uuid # For default UUID generation
 from datetime import datetime, timezone
+import enum
 
 # It's common to have a Base for all models in a specific DB or context.
 # If user_tenant_models.py uses a different Base, ensure they don't conflict
 # or use a shared Base if appropriate. For tenant-specific tables, this Base is fine.
 TenantBase = declarative_base()
+
+class AccountType(str, enum.Enum):
+    Girokonto = 'giro'
+    Tagesgeldkonto = 'tagesgeld'
+    Festgeldkonto = 'festgeld'
+    Sparkonto = 'spar'
+    Kreditkarte = 'kreditkarte'
+    Depot = 'depot'
+    Bausparvertrag = 'bauspar'
+    Darlehenskonto = 'darlehen'
+    Geschäftskonto = 'geschaeft'
+    Gemeinschaftskonto = 'gemeinschaft'
+    Fremdwährungskonto = 'fremdwaehrung'
+    Virtuell = 'virtuell'
+    Bargeld = 'bar'
+    Sonstiges = 'sonstiges'
 
 class AccountGroup(TenantBase):
     __tablename__ = "account_groups"
@@ -34,7 +51,7 @@ class Account(TenantBase):
     name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
     note = Column(Text, nullable=True)
-    accountType = Column(String, nullable=False) # Matches AccountType enum (CHECKING, SAVINGS, etc.)
+    accountType = Column(Enum(AccountType, values_callable=lambda obj: [e.value for e in obj]), nullable=False) # Matches AccountType enum
     isActive = Column(Boolean, nullable=False, default=True)
     isOfflineBudget = Column(Boolean, nullable=False, default=False)
 

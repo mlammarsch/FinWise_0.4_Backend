@@ -84,6 +84,7 @@ class AccountType(str, Enum):
     FREMDWAEHRUNGSKONTO = 'fremdwaehrung'
     VIRTUELL = 'virtuell'
     BARGELD = 'bar'
+    CHECKING = 'checking'
     SONSTIGES = 'sonstiges'
 
 # Pydantic models for payload data
@@ -119,7 +120,7 @@ class AccountPayload(BaseModel):
             expected_values = [e.value for e in AccountType]
             raise ValueError(f"Ungültiger Wert '{v}' für AccountType. Erwartet einen von (case-insensitive): {expected_values}")
         if v is None:
-            return AccountType.CHECKING  # Default value
+            return AccountType.SONSTIGES  # Default value
         raise TypeError(f"Ungültiger Typ für AccountType: {type(v)}. Erwartet str oder AccountType.")
 
     class Config:
