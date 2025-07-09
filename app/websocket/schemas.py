@@ -70,11 +70,21 @@ class SyncOperationType(Enum):
     INITIAL_LOAD = "initial_load" # Hinzugefügt für den initialen Ladevorgang
     RESET = "reset" # Hinzugefügt für Tenant-Database-Reset
 
-class AccountType(Enum):
-    CHECKING = 'CHECKING'
-    SAVINGS = 'SAVINGS'
-    CREDIT = 'CREDIT'
-    CASH = 'CASH'
+class AccountType(str, Enum):
+    GIROKONTO = 'giro'
+    TAGESGELDKONTO = 'tagesgeld'
+    FESTGELDKONTO = 'festgeld'
+    SPARKONTO = 'spar'
+    KREDITKARTE = 'kreditkarte'
+    DEPOT = 'depot'
+    BAUSPARVERTRAG = 'bauspar'
+    DARLEHENSKONTO = 'darlehen'
+    GESCHAEFTSKONTO = 'geschaeft'
+    GEMEINSCHAFTSKONTO = 'gemeinschaft'
+    FREMDWAEHRUNGSKONTO = 'fremdwaehrung'
+    VIRTUELL = 'virtuell'
+    BARGELD = 'bar'
+    SONSTIGES = 'sonstiges'
 
 # Pydantic models for payload data
 class AccountPayload(BaseModel):
@@ -82,7 +92,7 @@ class AccountPayload(BaseModel):
     name: str
     description: Optional[str] = None
     note: Optional[str] = None
-    accountType: Optional[AccountType] = AccountType.CHECKING
+    accountType: Optional[AccountType] = AccountType.SONSTIGES
     isActive: bool
     isOfflineBudget: bool
     accountGroupId: str # UUID as string from frontend
