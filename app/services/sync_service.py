@@ -595,12 +595,12 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                 return False, error_msg
 
             if operation_type == SyncOperationType.CREATE:
-                existing_transaction = crud_transaction.get_transaction(db=db, transaction_id=entity_id)
+                existing_transaction = crud_transaction.get(db=db, id=entity_id)
                 if existing_transaction:
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
                     if isinstance(payload, TransactionPayload) and normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_transaction = crud_transaction.update_transaction(db=db, db_transaction=existing_transaction, transaction_in=payload)
+                        updated_transaction = crud_transaction.update(db=db, db_obj=existing_transaction, obj_in=payload)
                         infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(updated_transaction)
                     else:
@@ -609,7 +609,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                         authoritative_data_used = True
                 else:
                     if isinstance(payload, TransactionPayload):
-                        new_transaction = crud_transaction.create_transaction(db=db, transaction_in=payload)
+                        new_transaction = crud_transaction.create_with_tenant(db=db, obj_in=payload, tenant_id=entry.tenantId)
                         infoLog(MODULE_NAME, f"Created Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(new_transaction)
                     else:
@@ -618,12 +618,12 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                         return False, error_msg
 
             elif operation_type == SyncOperationType.UPDATE:
-                existing_transaction = crud_transaction.get_transaction(db=db, transaction_id=entity_id)
+                existing_transaction = crud_transaction.get(db=db, id=entity_id)
                 if existing_transaction and isinstance(payload, TransactionPayload):
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
                     if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_transaction = crud_transaction.update_transaction(db=db, db_transaction=existing_transaction, transaction_in=payload)
+                        updated_transaction = crud_transaction.update(db=db, db_obj=existing_transaction, obj_in=payload)
                         infoLog(MODULE_NAME, f"Applied UPDATE (LWW win) for Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(updated_transaction)
                     else:
@@ -635,14 +635,15 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     return False, "transaction_not_found"
 
             elif operation_type == SyncOperationType.DELETE:
-                existing_transaction = crud_transaction.get_transaction(db=db, transaction_id=entity_id)
+                existing_transaction = crud_transaction.get(db=db, id=entity_id)
                 if existing_transaction:
-                    crud_transaction.delete_transaction(db=db, transaction_id=entity_id)
+                    crud_transaction.delete(db=db, id=entity_id)
                     infoLog(MODULE_NAME, f"Deleted Transaction {entity_id}")
                     notification_data = DeletePayload(id=entity_id)
                 else:
                     infoLog(MODULE_NAME, f"Transaction {entity_id} not found for DELETE")
                     notification_data = DeletePayload(id=entity_id)
+                    authoritative_data_used = True
 
         else:
             error_msg = f"Unknown entity type: {entity_type}"
@@ -714,7 +715,7 @@ async def get_initial_data_for_tenant(tenant_id: str) -> tuple[Optional[InitialD
         tags_db = crud_tag.get_tags(db=db)
         automation_rules_db = crud_automation_rule.get_automation_rules(db=db)
         planning_transactions_db = crud_planning_transaction.get_planning_transactions(db=db)
-        transactions_db = crud_transaction.get_transactions(db=db)
+        transactions_db = crud_transaction.get_multi(db=db)
 
         accounts_payload = [AccountPayload.model_validate(acc) for acc in accounts_db]
         account_groups_payload = [AccountGroupPayload.model_validate(ag) for ag in account_groups_db]
