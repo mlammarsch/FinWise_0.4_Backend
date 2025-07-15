@@ -595,7 +595,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                 return False, error_msg
 
             if operation_type == SyncOperationType.CREATE:
-                existing_transaction = crud_transaction.get(db=db, id=entity_id)
+                existing_transaction = crud_transaction.get_transaction(db=db, id=entity_id)
                 if existing_transaction:
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
@@ -609,7 +609,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                         authoritative_data_used = True
                 else:
                     if isinstance(payload, TransactionPayload):
-                        new_transaction = crud_transaction.create_with_tenant(db=db, obj_in=payload, tenant_id=entry.tenantId)
+                        new_transaction = crud_transaction.create_transaction(db=db, obj_in=payload, tenant_id=entry.tenantId)
                         infoLog(MODULE_NAME, f"Created Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(new_transaction)
                     else:
@@ -618,7 +618,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                         return False, error_msg
 
             elif operation_type == SyncOperationType.UPDATE:
-                existing_transaction = crud_transaction.get(db=db, id=entity_id)
+                existing_transaction = crud_transaction.get_transaction(db=db, id=entity_id)
                 if existing_transaction and isinstance(payload, TransactionPayload):
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
@@ -635,7 +635,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     return False, "transaction_not_found"
 
             elif operation_type == SyncOperationType.DELETE:
-                existing_transaction = crud_transaction.get(db=db, id=entity_id)
+                existing_transaction = crud_transaction.get_transaction(db=db, id=entity_id)
                 if existing_transaction:
                     crud_transaction.delete(db=db, id=entity_id)
                     infoLog(MODULE_NAME, f"Deleted Transaction {entity_id}")

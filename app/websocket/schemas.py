@@ -261,12 +261,13 @@ class TransactionPayload(BaseModel):
     reconciled: Optional[bool] = False
     toCategoryId: Optional[str] = None
     payee: Optional[str] = None
-    recipientId: Optional[str] = None  # Added missing field from frontend
+    recipient_id: Optional[str] = Field(default=None, alias="recipientId")  # Renamed to snake_case
     updated_at: Optional[datetime.datetime] = None
 
     class Config:
         use_enum_values = True
         from_attributes = True
+        populate_by_name = True
 
 # For DELETE operation, payload might just contain the ID or be null
 class DeletePayload(BaseModel):
@@ -482,6 +483,8 @@ class DataUpdateNotificationMessage(BaseModel):
         The NotificationDataPayload class handles the internal validation.
         """
         if not isinstance(v, NotificationDataPayload):
+            if isinstance(v, (AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, RecipientPayload, TagPayload, AutomationRulePayload, PlanningTransactionPayload, TransactionPayload, DeletePayload)):
+                return NotificationDataPayload(single_entity=v)
             if isinstance(v, dict):
                 return NotificationDataPayload(**v)
             raise ValueError(f"'data' must be NotificationDataPayload or a dict. Got: {type(v)}")

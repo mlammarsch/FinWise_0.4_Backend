@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Generic, TypeVar
 from datetime import datetime
 
 from app.models.financial_models import Transaction, Recipient
@@ -8,11 +8,19 @@ from app.utils.logger import infoLog, errorLog, debugLog
 
 MODULE_NAME = "crud_transaction"
 
-class CRUDBase:
+# DEBUG: Add logging to diagnose the Generic type issue
+print(f"DEBUG {MODULE_NAME}: Importing Generic types...")
+
+ModelType = TypeVar("ModelType")
+CreateSchemaType = TypeVar("CreateSchemaType")
+UpdateSchemaType = TypeVar("UpdateSchemaType")
+
+class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     """Base CRUD class with common operations."""
 
-    def __init__(self, model):
+    def __init__(self, model: ModelType):
         self.model = model
+        print(f"DEBUG {MODULE_NAME}: CRUDBase initialized with model: {model}")
 
 class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.TransactionUpdate]):
     """CRUD operations for Transaction with recipientId handling."""
@@ -29,7 +37,7 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
         # Handle recipient_id and payee field logic
         payee_value = obj_in.payee
         if obj_in.recipient_id:
-            # If recipientId is provided, lookup the recipient name for payee
+            # If recipient_id is provided, lookup the recipient name for payee
             recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipient_id).first()
             if recipient:
                 payee_value = recipient.name
@@ -66,7 +74,7 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
         db.commit()
         db.refresh(db_transaction)
 
-        infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id} with recipientId: {obj_in.recipient_id}")
+        infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id} with recipientId: {obj_in.recipientId}")
         return db_transaction
 
     def update(
@@ -81,7 +89,7 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
         # Handle recipient_id and payee field logic
         payee_value = obj_in.payee
         if obj_in.recipient_id:
-            # If recipientId is provided, lookup the recipient name for payee
+            # If recipient_id is provided, lookup the recipient name for payee
             recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipient_id).first()
             if recipient:
                 payee_value = recipient.name
@@ -153,3 +161,28 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
 
 # Create instance of the CRUD class
 crud_transaction = CRUDTransaction(Transaction)
+
+# Export functions for compatibility with __init__.py imports
+def create_transaction(db: Session, *, obj_in: schemas.TransactionCreate, tenant_id: str) -> Transaction:
+    """Wrapper function for create_with_tenant."""
+    return crud_transaction.create_with_tenant(db, obj_in=obj_in, tenant_id=tenant_id)
+
+def get_transaction(db: Session, id: str) -> Optional[Transaction]:
+    """Wrapper function for get."""
+    return crud_transaction.get(db, id=id)
+
+def get_transactions(db: Session, *, skip: int = 0, limit: int = 1000) -> List[Transaction]:
+    """Wrapper function for get_multi."""
+    return crud_transaction.get_multi(db, skip=skip, limit=limit)
+
+def update_transaction(db: Session, *, db_obj: Transaction, obj_in: schemas.TransactionUpdate) -> Transaction:
+    """Wrapper function for update."""
+    return crud_transaction.update(db, db_obj=db_obj, obj_in=obj_in)
+
+def delete_transaction(db: Session, *, id: str) -> Optional[Transaction]:
+    """Wrapper function for delete."""
+    return crud_transaction.delete(db, id=id)
+
+def get_transactions_modified_since(db: Session, *, timestamp: datetime) -> List[Transaction]:
+    """Wrapper function for get_transactions_modified_since."""
+    return crud_transaction.get_transactions_modified_since(db, timestamp=timestamp)
