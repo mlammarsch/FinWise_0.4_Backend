@@ -441,7 +441,23 @@ class ServerEventType(Enum):
 # The 'data' field for a DATA_UPDATE notification message.
 # It can be a full Account, AccountGroup, Category, CategoryGroup, Recipient, Tag, AutomationRule, PlanningTransaction, or Transaction payload for create/update operations,
 # or a DeletePayload (containing just the ID) for delete operations.
-NotificationDataPayload = Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, RecipientPayload, TagPayload, AutomationRulePayload, PlanningTransactionPayload, TransactionPayload, DeletePayload]
+# For batch updates, it can also contain lists of entities.
+class NotificationDataPayload(BaseModel):
+    accounts: Optional[list[AccountPayload]] = None
+    account_groups: Optional[list[AccountGroupPayload]] = None
+    categories: Optional[list[CategoryPayload]] = None
+    category_groups: Optional[list[CategoryGroupPayload]] = None
+    recipients: Optional[list[RecipientPayload]] = None
+    tags: Optional[list[TagPayload]] = None
+    automation_rules: Optional[list[AutomationRulePayload]] = None
+    planning_transactions: Optional[list[PlanningTransactionPayload]] = None
+    transactions: Optional[list[TransactionPayload]] = None
+    # For single entity updates, keep the original union type
+    single_entity: Optional[Union[AccountPayload, AccountGroupPayload, CategoryPayload, CategoryGroupPayload, RecipientPayload, TagPayload, AutomationRulePayload, PlanningTransactionPayload, TransactionPayload, DeletePayload]] = None
+
+    class Config:
+        use_enum_values = True
+        from_attributes = True
 
 
 class DataUpdateNotificationMessage(BaseModel):
@@ -462,120 +478,13 @@ class DataUpdateNotificationMessage(BaseModel):
     @validator('data', pre=True, always=True)
     def validate_data_based_on_operation_and_entity(cls, v, values):
         """
-        Validates that the 'data' payload matches the 'operation_type' and 'entity_type'.
-        - For DELETE: 'data' must be DeletePayload.
-        - For CREATE/UPDATE of Account: 'data' must be AccountPayload.
-        - For CREATE/UPDATE of AccountGroup: 'data' must be AccountGroupPayload.
+        Validates that the 'data' payload is a valid NotificationDataPayload.
+        The NotificationDataPayload class handles the internal validation.
         """
-        op_type_raw = values.get('operation_type') # This will be a string due to use_enum_values=True
-        entity_type_raw = values.get('entity_type') # This will be a string due to use_enum_values=True
-
-        # Convert op_type_raw string to SyncOperationType enum member for reliable comparison
-        op_type: Optional[SyncOperationType] = None
-        if isinstance(op_type_raw, str):
-            try:
-                op_type = SyncOperationType(op_type_raw)
-            except ValueError:
-                raise ValueError(f"Invalid operation_type string: {op_type_raw}")
-        elif isinstance(op_type_raw, SyncOperationType): # Should not happen with use_enum_values=True but good for robustness
-            op_type = op_type_raw
-        else:
-            raise ValueError(f"Unexpected type for operation_type: {type(op_type_raw)}")
-
-        # Convert entity_type_raw string to EntityType enum member for reliable comparison
-        entity_type: Optional[EntityType] = None
-        if isinstance(entity_type_raw, str):
-            try:
-                entity_type = EntityType(entity_type_raw)
-            except ValueError:
-                # Log or handle the error if entity_type_raw is not a valid EntityType string
-                raise ValueError(f"Invalid entity_type string: {entity_type_raw}. Expected one of {[e.value for e in EntityType]}")
-        elif isinstance(entity_type_raw, EntityType): # Should not happen with use_enum_values=True but good for robustness
-            entity_type = entity_type_raw
-        else:
-            raise ValueError(f"Unexpected type for entity_type: {type(entity_type_raw)}. Expected str or EntityType.")
-
-        if op_type == SyncOperationType.DELETE:
-            if not isinstance(v, DeletePayload):
-                # Allow a dict that can be parsed into DeletePayload
-                if isinstance(v, dict) and 'id' in v:
-                    return DeletePayload(**v)
-                # If it's already a DeletePayload instance, it's fine
-                elif isinstance(v, DeletePayload):
-                    return v
-                raise ValueError(
-                    f"For DELETE operation, 'data' must be a DeletePayload or a dict with 'id'. Got: {type(v)}"
-                )
-        elif op_type == SyncOperationType.CREATE or op_type == SyncOperationType.UPDATE: # Explicit comparison
-            if entity_type == EntityType.ACCOUNT:
-                if not isinstance(v, AccountPayload):
-                    if isinstance(v, dict):
-                        return AccountPayload(**v)
-                    raise ValueError(
-                        f"For Account entity with {op_type.value} operation, 'data' must be AccountPayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.ACCOUNT_GROUP:
-                if not isinstance(v, AccountGroupPayload):
-                    if isinstance(v, dict):
-                        return AccountGroupPayload(**v)
-                    raise ValueError(
-                        f"For AccountGroup entity with {op_type.value} operation, 'data' must be AccountGroupPayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.CATEGORY:
-                if not isinstance(v, CategoryPayload):
-                    if isinstance(v, dict):
-                        return CategoryPayload(**v)
-                    raise ValueError(
-                        f"For Category entity with {op_type.value} operation, 'data' must be CategoryPayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.CATEGORY_GROUP:
-                if not isinstance(v, CategoryGroupPayload):
-                    if isinstance(v, dict):
-                        return CategoryGroupPayload(**v)
-                    raise ValueError(
-                        f"For CategoryGroup entity with {op_type.value} operation, 'data' must be CategoryGroupPayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.RECIPIENT:
-                if not isinstance(v, RecipientPayload):
-                    if isinstance(v, dict):
-                        return RecipientPayload(**v)
-                    raise ValueError(
-                        f"For Recipient entity with {op_type.value} operation, 'data' must be RecipientPayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.TAG:
-                if not isinstance(v, TagPayload):
-                    if isinstance(v, dict):
-                        return TagPayload(**v)
-                    raise ValueError(
-                        f"For Tag entity with {op_type.value} operation, 'data' must be TagPayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.AUTOMATION_RULE:
-                if not isinstance(v, AutomationRulePayload):
-                    if isinstance(v, dict):
-                        return AutomationRulePayload(**v)
-                    raise ValueError(
-                        f"For AutomationRule entity with {op_type.value} operation, 'data' must be AutomationRulePayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.PLANNING_TRANSACTION:
-                if not isinstance(v, PlanningTransactionPayload):
-                    if isinstance(v, dict):
-                        return PlanningTransactionPayload(**v)
-                    raise ValueError(
-                        f"For PlanningTransaction entity with {op_type.value} operation, 'data' must be PlanningTransactionPayload. Got: {type(v)}"
-                    )
-            elif entity_type == EntityType.TRANSACTION:
-                if not isinstance(v, TransactionPayload):
-                    if isinstance(v, dict):
-                        return TransactionPayload(**v)
-                    raise ValueError(
-                        f"For Transaction entity with {op_type.value} operation, 'data' must be TransactionPayload. Got: {type(v)}"
-                    )
-            else:
-                # This case should ideally not be reached if EntityType is exhaustive for operations
-                raise ValueError(f"Unsupported entity_type '{entity_type}' for CREATE/UPDATE operation.")
-        else:
-            # This case should ideally not be reached if SyncOperationType is exhaustive
-            raise ValueError(f"Unsupported operation_type: {op_type}")
+        if not isinstance(v, NotificationDataPayload):
+            if isinstance(v, dict):
+                return NotificationDataPayload(**v)
+            raise ValueError(f"'data' must be NotificationDataPayload or a dict. Got: {type(v)}")
         return v
 
     class Config:

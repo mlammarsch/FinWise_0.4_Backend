@@ -167,3 +167,46 @@ class AccountSchema(AccountBase):
 
 class AccountUpdate(AccountBase):
     logo_path: Optional[str] = None
+
+# Transaction Schemas
+class TransactionType(str, enum.Enum):
+    EXPENSE = 'expense'
+    INCOME = 'income'
+    ACCOUNTTRANSFER = 'accounttransfer'
+    CATEGORYTRANSFER = 'categorytransfer'
+
+class TransactionBase(BaseModel):
+    accountId: str
+    categoryId: str | None = None
+    date: str  # ISO 8601 date string
+    valueDate: str  # ISO 8601 date string
+    amount: Decimal
+    description: str
+    note: str | None = None
+    tagIds: List[str] = []
+    type: str  # TransactionType enum value
+    runningBalance: Decimal = Decimal('0.0')
+    counterTransactionId: str | None = None
+    planningTransactionId: str | None = None
+    isReconciliation: bool = False
+    isCategoryTransfer: bool = False
+    transferToAccountId: str | None = None
+    reconciled: bool = False
+    toCategoryId: str | None = None
+    payee: str | None = None
+    recipient_id: Optional[str] = None
+
+class TransactionCreate(TransactionBase):
+    id: str | None = None
+    updated_at: datetime | None = None
+
+class TransactionUpdate(TransactionBase):
+    updated_at: datetime | None = None
+
+class Transaction(TransactionBase):
+    id: str
+    createdAt: datetime
+    updatedAt: datetime
+
+    class Config:
+        from_attributes = True

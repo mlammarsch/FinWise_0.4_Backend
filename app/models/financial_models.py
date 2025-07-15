@@ -203,6 +203,11 @@ class Transaction(TenantBase):
     reconciled = Column(Boolean, nullable=False, default=False)
     toCategoryId = Column(String, nullable=True)
     payee = Column(String, nullable=True)
+    recipientId = Column(String, ForeignKey("recipients.id"), nullable=True)
+
+    # Relationships
+    recipient = relationship("Recipient")
+
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

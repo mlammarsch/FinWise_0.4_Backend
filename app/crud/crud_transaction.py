@@ -2,115 +2,154 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 
-from app.models.financial_models import Transaction
-from app.websocket.schemas import (
-    TransactionPayload,
-    DataUpdateNotificationMessage,
-    ServerEventType,
-    EntityType,
-    SyncOperationType,
-)
+from app.models.financial_models import Transaction, Recipient
+from app.models import schemas
 from app.utils.logger import infoLog, errorLog, debugLog
 
 MODULE_NAME = "crud_transaction"
 
-def create_transaction(
-    db: Session,
-    *,
-    transaction_in: TransactionPayload,
-) -> Transaction:
-    """Creates a new Transaction."""
+class CRUDBase:
+    """Base CRUD class with common operations."""
 
-    db_transaction = Transaction(
-        id=transaction_in.id,
-        accountId=transaction_in.accountId,
-        categoryId=transaction_in.categoryId,
-        date=transaction_in.date,
-        valueDate=transaction_in.valueDate,
-        amount=transaction_in.amount,
-        description=transaction_in.description or "",  # Provide default empty string if None
-        note=transaction_in.note,
-        tagIds=transaction_in.tagIds,
-        type=transaction_in.type,
-        runningBalance=transaction_in.runningBalance,
-        counterTransactionId=transaction_in.counterTransactionId,
-        planningTransactionId=transaction_in.planningTransactionId,
-        isReconciliation=transaction_in.isReconciliation or False,
-        isCategoryTransfer=transaction_in.isCategoryTransfer or False,
-        transferToAccountId=transaction_in.transferToAccountId,
-        reconciled=transaction_in.reconciled or False,
-        toCategoryId=transaction_in.toCategoryId,
-        payee=transaction_in.payee,
-        createdAt=datetime.utcnow(),
-        updatedAt=transaction_in.updated_at or datetime.utcnow(),
-    )
+    def __init__(self, model):
+        self.model = model
 
-    db.add(db_transaction)
-    db.commit()
-    db.refresh(db_transaction)
+class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.TransactionUpdate]):
+    """CRUD operations for Transaction with recipientId handling."""
 
-    infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id}", details=transaction_in.dict())
-    return db_transaction
+    def create_with_tenant(
+        self,
+        db: Session,
+        *,
+        obj_in: schemas.TransactionCreate,
+        tenant_id: str
+    ) -> Transaction:
+        """Creates a new Transaction with tenant context and recipientId handling."""
 
+        # Handle recipient_id and payee field logic
+        payee_value = obj_in.payee
+        if obj_in.recipient_id:
+            # If recipientId is provided, lookup the recipient name for payee
+            recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipient_id).first()
+            if recipient:
+                payee_value = recipient.name
+                debugLog(MODULE_NAME, f"Set payee to recipient name: {payee_value}", details={"recipient_id": obj_in.recipient_id})
+            else:
+                errorLog(MODULE_NAME, f"Recipient not found for ID: {obj_in.recipient_id}")
 
-def get_transaction(db: Session, transaction_id: str) -> Optional[Transaction]:
-    """Retrieves a Transaction by ID."""
-    return db.query(Transaction).filter(Transaction.id == transaction_id).first()
+        db_transaction = Transaction(
+            id=obj_in.id,
+            accountId=obj_in.accountId,
+            categoryId=obj_in.categoryId,
+            date=obj_in.date,
+            valueDate=obj_in.valueDate,
+            amount=obj_in.amount,
+            description=obj_in.description or "",
+            note=obj_in.note,
+            tagIds=obj_in.tagIds,
+            type=obj_in.type,
+            runningBalance=obj_in.runningBalance,
+            counterTransactionId=obj_in.counterTransactionId,
+            planningTransactionId=obj_in.planningTransactionId,
+            isReconciliation=obj_in.isReconciliation or False,
+            isCategoryTransfer=obj_in.isCategoryTransfer or False,
+            transferToAccountId=obj_in.transferToAccountId,
+            reconciled=obj_in.reconciled or False,
+            toCategoryId=obj_in.toCategoryId,
+            payee=payee_value,
+            recipientId=obj_in.recipient_id,  # Store the recipientId
+            createdAt=datetime.utcnow(),
+            updatedAt=obj_in.updated_at or datetime.utcnow(),
+        )
 
-
-def get_transactions(db: Session, skip: int = 0, limit: int = 1000) -> List[Transaction]:
-    """Retrieves all Transactions with optional pagination."""
-    return db.query(Transaction).offset(skip).limit(limit).all()
-
-def update_transaction(
-    db: Session, *, db_transaction: Transaction, transaction_in: TransactionPayload
-) -> Transaction:
-    """Updates an existing Transaction."""
-
-    db_transaction.accountId = transaction_in.accountId
-    db_transaction.categoryId = transaction_in.categoryId
-    db_transaction.date = transaction_in.date
-    db_transaction.valueDate = transaction_in.valueDate
-    db_transaction.amount = transaction_in.amount
-    db_transaction.description = transaction_in.description or ""  # Provide default empty string if None
-    db_transaction.note = transaction_in.note
-    db_transaction.tagIds = transaction_in.tagIds
-    db_transaction.type = transaction_in.type
-    db_transaction.runningBalance = transaction_in.runningBalance
-    db_transaction.counterTransactionId = transaction_in.counterTransactionId
-    db_transaction.planningTransactionId = transaction_in.planningTransactionId
-    db_transaction.isReconciliation = transaction_in.isReconciliation or False
-    db_transaction.isCategoryTransfer = transaction_in.isCategoryTransfer or False
-    db_transaction.transferToAccountId = transaction_in.transferToAccountId
-    db_transaction.reconciled = transaction_in.reconciled or False
-    db_transaction.toCategoryId = transaction_in.toCategoryId
-    db_transaction.payee = transaction_in.payee
-    db_transaction.updatedAt = transaction_in.updated_at or datetime.utcnow()
-
-    db.commit()
-    db.refresh(db_transaction)
-
-    infoLog(MODULE_NAME, f"Updated Transaction {db_transaction.id}", details=transaction_in.dict())
-    return db_transaction
-
-
-def delete_transaction(db: Session, *, transaction_id: str) -> Optional[Transaction]:
-    """Deletes a Transaction by ID."""
-    db_transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if db_transaction:
-        db.delete(db_transaction)
+        db.add(db_transaction)
         db.commit()
-        infoLog(MODULE_NAME, f"Deleted Transaction {transaction_id}")
+        db.refresh(db_transaction)
+
+        infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id} with recipientId: {obj_in.recipient_id}")
         return db_transaction
-    else:
-        errorLog(MODULE_NAME, f"Transaction {transaction_id} not found for deletion")
-        return None
 
+    def update(
+        self,
+        db: Session,
+        *,
+        db_obj: Transaction,
+        obj_in: schemas.TransactionUpdate
+    ) -> Transaction:
+        """Updates an existing Transaction with recipientId handling."""
 
-def get_transactions_modified_since(
-    db: Session, *, timestamp: datetime
-) -> List[Transaction]:
-    """Retrieves all transactions that were created or updated since the given timestamp."""
-    # This function might be useful for a full sync later, but not directly for processing individual queue entries.
-    # For now, it's adapted to the new model structure.
-    return db.query(Transaction).filter(Transaction.updatedAt >= timestamp).all()
+        # Handle recipient_id and payee field logic
+        payee_value = obj_in.payee
+        if obj_in.recipient_id:
+            # If recipientId is provided, lookup the recipient name for payee
+            recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipient_id).first()
+            if recipient:
+                payee_value = recipient.name
+                debugLog(MODULE_NAME, f"Updated payee to recipient name: {payee_value}", details={"recipient_id": obj_in.recipient_id})
+            else:
+                errorLog(MODULE_NAME, f"Recipient not found for ID: {obj_in.recipient_id}")
+
+        # Update all fields
+        db_obj.accountId = obj_in.accountId
+        db_obj.categoryId = obj_in.categoryId
+        db_obj.date = obj_in.date
+        db_obj.valueDate = obj_in.valueDate
+        db_obj.amount = obj_in.amount
+        db_obj.description = obj_in.description or ""
+        db_obj.note = obj_in.note
+        db_obj.tagIds = obj_in.tagIds
+        db_obj.type = obj_in.type
+        db_obj.runningBalance = obj_in.runningBalance
+        db_obj.counterTransactionId = obj_in.counterTransactionId
+        db_obj.planningTransactionId = obj_in.planningTransactionId
+        db_obj.isReconciliation = obj_in.isReconciliation or False
+        db_obj.isCategoryTransfer = obj_in.isCategoryTransfer or False
+        db_obj.transferToAccountId = obj_in.transferToAccountId
+        db_obj.reconciled = obj_in.reconciled or False
+        db_obj.toCategoryId = obj_in.toCategoryId
+        db_obj.payee = payee_value
+        db_obj.recipientId = obj_in.recipient_id  # Update the recipientId
+
+        # Explicitly set updatedAt from payload if provided for LWW conflict resolution
+        if obj_in.updated_at:
+            db_obj.updatedAt = obj_in.updated_at
+        else:
+            db_obj.updatedAt = datetime.utcnow()
+
+        db.commit()
+        db.refresh(db_obj)
+
+        infoLog(MODULE_NAME, f"Updated Transaction {db_obj.id} with recipientId: {obj_in.recipient_id}")
+        return db_obj
+
+    def get(self, db: Session, id: str) -> Optional[Transaction]:
+        """Retrieves a Transaction by ID."""
+        return db.query(Transaction).filter(Transaction.id == id).first()
+
+    def get_multi(self, db: Session, *, skip: int = 0, limit: int = 1000) -> List[Transaction]:
+        """Retrieves all Transactions with optional pagination."""
+        return db.query(Transaction).offset(skip).limit(limit).all()
+
+    def delete(self, db: Session, *, id: str) -> Optional[Transaction]:
+        """Deletes a Transaction by ID."""
+        db_transaction = db.query(Transaction).filter(Transaction.id == id).first()
+        if db_transaction:
+            db.delete(db_transaction)
+            db.commit()
+            infoLog(MODULE_NAME, f"Deleted Transaction {id}")
+            return db_transaction
+        else:
+            errorLog(MODULE_NAME, f"Transaction {id} not found for deletion")
+            return None
+
+    def get_transactions_modified_since(
+        self,
+        db: Session,
+        *,
+        timestamp: datetime
+    ) -> List[Transaction]:
+        """Retrieves all transactions that were created or updated since the given timestamp."""
+        return db.query(Transaction).filter(Transaction.updatedAt >= timestamp).all()
+
+# Create instance of the CRUD class
+crud_transaction = CRUDTransaction(Transaction)
