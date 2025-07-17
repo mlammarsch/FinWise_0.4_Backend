@@ -15,6 +15,7 @@ class ConnectionManager:
         self.ping_timeout = 10
         self.heartbeat_task: Optional[asyncio.Task] = None
         self.connection_health: Dict[WebSocket, bool] = {}
+        self.websocket_to_tenant_map: Dict[WebSocket, str] = {} # New map to store WebSocket to tenant_id mapping
 
     async def connect(self, websocket: WebSocket, tenant_id: str):
         await websocket.accept()
@@ -115,12 +116,64 @@ class ConnectionManager:
         )
 
     async def send_personal_json_message(self, message: dict, websocket: WebSocket):
-        await websocket.send_json(message)
-        debugLog(
-            "ConnectionManager",
-            "Sent personal JSON message",
-            details={"client": websocket.client.host if websocket.client else "Unknown", "message_keys": list(message.keys())}
-        )
+        client_host = websocket.client.host if websocket.client else "Unknown"
+        try:
+            # 🔍 DIAGNOSE: Check connection state before sending personal message
+            connection_state = {
+                "client_state": getattr(websocket, 'client_state', None),
+                "app_state": getattr(websocket, 'application_state', None),
+                "connection_healthy": self.connection_health.get(websocket, False)
+            }
+            debugLog(
+                "ConnectionManager",
+                f"🔍 DIAGNOSE: Connection state before personal JSON send",
+                details={"client": client_host, "connection_state": connection_state, "message_keys": list(message.keys())}
+            )
+
+            await websocket.send_json(message)
+
+            debugLog(
+                "ConnectionManager",
+                f"✅ Successfully sent personal JSON message",
+                details={
+                    "client": client_host,
+                    "message_keys": list(message.keys())
+                }
+            )
+            self.connection_health[websocket] = True # Mark as healthy after successful send
+        except (RuntimeError, WebSocketDisconnect) as e:
+            errorLog(
+                "ConnectionManager",
+                f"❌ Failed to send personal JSON message to {client_host}: {e}",
+                details={
+                    "client": client_host,
+                    "error": str(e),
+                    "message_keys": list(message.keys())
+                }
+            )
+            self.connection_health[websocket] = False # Mark as unhealthy
+            # Attempt to disconnect if not already disconnected
+            tenant_id = self.get_tenant_id_from_websocket(websocket)
+            if tenant_id and websocket in self.active_connections.get(tenant_id, []):
+                warnLog("ConnectionManager", f"Attempting to disconnect unhealthy WebSocket for {client_host}")
+                self.disconnect(websocket, tenant_id, reason=f"Send failed: {e}")
+            raise # Re-raise the exception to be handled by the caller (e.g., WebSocketEndpoints)
+        except Exception as e:
+            errorLog(
+                "ConnectionManager",
+                f"❌ Unexpected error sending personal JSON message to {client_host}: {e}",
+                details={
+                    "client": client_host,
+                    "error": str(e),
+                    "message_keys": list(message.keys())
+                }
+            )
+            self.connection_health[websocket] = False # Mark as unhealthy
+            tenant_id = self.get_tenant_id_from_websocket(websocket)
+            if tenant_id and websocket in self.active_connections.get(tenant_id, []):
+                warnLog("ConnectionManager", f"Attempting to disconnect unhealthy WebSocket for {client_host}")
+                self.disconnect(websocket, tenant_id, reason=f"Unexpected send error: {e}")
+            raise # Re-raise the exception
 
     async def broadcast_to_tenant(self, message: str, tenant_id: str):
         if tenant_id in self.active_connections:
@@ -135,6 +188,7 @@ class ConnectionManager:
     async def broadcast_json_to_tenant(self, message: dict, tenant_id: str, exclude_websocket: Optional[WebSocket] = None):
         if tenant_id in self.active_connections:
             sent_to_count = 0
+            failed_connections = []
             for connection in self.active_connections[tenant_id]:
                 if exclude_websocket and connection == exclude_websocket:
                     continue
@@ -143,12 +197,42 @@ class ConnectionManager:
                     f"Attempting to send JSON to {connection.client.host if connection.client else 'Unknown'} for tenant {tenant_id} via broadcast_json_to_tenant",
                     details={"message_type": type(message), "message_content_preview": str(message)[:200]}
                 )
-                await connection.send_json(message)
-                sent_to_count += 1
+                try:
+                    # 🔍 DIAGNOSE: Check connection state before sending
+                    connection_state = {
+                        "client_state": getattr(connection, 'client_state', None),
+                        "app_state": getattr(connection, 'application_state', None),
+                        "connection_healthy": self.connection_health.get(connection, False)
+                    }
+                    debugLog(
+                        "ConnectionManager",
+                        f"🔍 DIAGNOSE: Connection state before JSON send for tenant {tenant_id}",
+                        details={"tenant_id": tenant_id, "connection_state": connection_state}
+                    )
+
+                    await connection.send_json(message)
+                    sent_to_count += 1
+
+                    debugLog(
+                        "ConnectionManager",
+                        f"✅ Successfully sent JSON message to connection for tenant {tenant_id}",
+                        details={"tenant_id": tenant_id, "client": connection.client.host if connection.client else "Unknown"}
+                    )
+                except Exception as send_error:
+                    failed_connections.append(connection)
+                    errorLog(
+                        "ConnectionManager",
+                        f"❌ Failed to send JSON message to connection for tenant {tenant_id}: {send_error}",
+                        details={"tenant_id": tenant_id, "client": connection.client.host if connection.client else "Unknown", "error": str(send_error)}
+                    )
+                    # Mark connection as unhealthy and disconnect
+                    self.connection_health[connection] = False
+                    self.disconnect(connection, tenant_id, reason=f"Send failed: {send_error}")
+
             debugLog(
                 "ConnectionManager",
                 f"Broadcasted JSON message to tenant: {tenant_id}",
-                details={"tenant_id": tenant_id, "message_keys": list(message.keys()), "connection_count": len(self.active_connections[tenant_id]), "sent_to_count": sent_to_count, "excluded_a_connection": bool(exclude_websocket)}
+                details={"tenant_id": tenant_id, "message_keys": list(message.keys()), "connection_count": len(self.active_connections[tenant_id]), "sent_to_count": sent_to_count, "failed_count": len(failed_connections), "excluded_a_connection": bool(exclude_websocket)}
             )
 
     async def broadcast_to_all(self, message: str):
@@ -206,11 +290,14 @@ class ConnectionManager:
                         if tenant_id:
                             warnLog("ConnectionManager", f"Fehler beim Senden des Pings an WebSocket für Tenant {tenant_id}: {e}",
                                     details={"tenant_id": tenant_id, "client": ws.client.host if ws.client else "Unknown", "error": str(e)})
-                            self.disconnect(ws, tenant_id, reason=f"Ping send failed: {e}")
+                            # Erst prüfen, ob WebSocket noch offen ist, bevor wir versuchen zu schließen
                             try:
-                                await ws.close(code=1001)
-                            except Exception:
-                                pass # Ignore errors on close, as the connection is already likely dead
+                                if ws.application_state is None or (hasattr(ws.application_state, 'value') and ws.application_state.value != 2):
+                                    await ws.close(code=1001)
+                            except Exception as close_error:
+                                debugLog("ConnectionManager", f"Fehler beim Schließen des WebSocket nach Ping-Fehler: {close_error}")
+                            # Disconnect NACH dem Close-Versuch aufrufen
+                            self.disconnect(ws, tenant_id, reason=f"Ping send failed: {e}")
             except asyncio.CancelledError:
                 infoLog("ConnectionManager", "Heartbeat-Loop wurde abgebrochen")
                 break
@@ -236,5 +323,9 @@ class ConnectionManager:
             "tenant_count": len(self.active_connections),
             "heartbeat_active": self.heartbeat_task is not None and not self.heartbeat_task.done()
         }
+
+    def get_tenant_id_from_websocket(self, websocket: WebSocket) -> Optional[str]:
+        """Retrieves the tenant_id associated with a given WebSocket."""
+        return self.websocket_to_tenant_map.get(websocket)
 
 manager = ConnectionManager()

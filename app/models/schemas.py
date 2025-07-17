@@ -194,7 +194,7 @@ class TransactionBase(BaseModel):
     reconciled: bool = False
     toCategoryId: str | None = None
     payee: str | None = None
-    recipient_id: Optional[str] = None
+    recipientId: Optional[str] = None
 
 class TransactionCreate(TransactionBase):
     id: str | None = None

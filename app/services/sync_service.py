@@ -46,7 +46,15 @@ def get_tenant_db_session(tenant_id: str) -> Session:
 
 async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[WebSocket] = None) -> tuple[bool, Optional[str]]:
     """Processes a sync entry, handling LWW, CRUD operations, and client notifications."""
-    debugLog(MODULE_NAME, f"Processing sync entry: {entry.id} for tenant {entry.tenantId}", details={**entry.model_dump(), "has_source_websocket": bool(source_websocket)})
+    infoLog(MODULE_NAME, f"🔄 SYNC START: Processing sync entry {entry.id} for tenant {entry.tenantId}, entity {entry.entityType.value} {entry.entityId}, operation {entry.operationType.value}", details={
+        "entry_id": entry.id,
+        "tenant_id": entry.tenantId,
+        "entity_type": entry.entityType.value,
+        "entity_id": entry.entityId,
+        "operation_type": entry.operationType.value,
+        "has_source_websocket": bool(source_websocket),
+        "payload_type": type(entry.payload).__name__ if entry.payload else "None"
+    })
 
     db: Optional[Session] = None
     try:
@@ -600,7 +608,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
                     if isinstance(payload, TransactionPayload) and normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_transaction = crud_transaction.update(db=db, db_obj=existing_transaction, obj_in=payload)
+                        updated_transaction = crud_transaction.update_transaction(db=db, db_obj=existing_transaction, obj_in=payload)
                         infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(updated_transaction)
                     else:
@@ -623,7 +631,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
                     if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_transaction = crud_transaction.update(db=db, db_obj=existing_transaction, obj_in=payload)
+                        updated_transaction = crud_transaction.update_transaction(db=db, db_obj=existing_transaction, obj_in=payload)
                         infoLog(MODULE_NAME, f"Applied UPDATE (LWW win) for Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(updated_transaction)
                     else:
@@ -637,7 +645,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
             elif operation_type == SyncOperationType.DELETE:
                 existing_transaction = crud_transaction.get_transaction(db=db, id=entity_id)
                 if existing_transaction:
-                    crud_transaction.delete(db=db, id=entity_id)
+                    crud_transaction.delete_transaction(db=db, id=entity_id)
                     infoLog(MODULE_NAME, f"Deleted Transaction {entity_id}")
                     notification_data = DeletePayload(id=entity_id)
                 else:
@@ -669,14 +677,31 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
             )
             debugLog(MODULE_NAME, f"Sent notification for {str(entity_type)} {entity_id}", details=message.model_dump())
 
+        infoLog(MODULE_NAME, f"✅ SYNC SUCCESS: Completed sync entry {entry.id} for tenant {entry.tenantId}, entity {entry.entityType.value} {entry.entityId}", details={
+            "entry_id": entry.id,
+            "tenant_id": entry.tenantId,
+            "entity_type": entry.entityType.value,
+            "entity_id": entry.entityId,
+            "operation_type": entry.operationType.value,
+            "notification_sent": bool(notification_data),
+            "authoritative_data_used": authoritative_data_used
+        })
         return True, None
 
     except sqlite3.OperationalError as oe:
-        error_msg = f"Database operational error processing sync entry {entry.id} for tenant {entry.tenantId}: {str(oe)}"
+        error_msg = f"❌ SYNC DB ERROR: Database operational error processing sync entry {entry.id} for tenant {entry.tenantId}: {str(oe)}"
         error_reason = "database_operational_error"
         if "no such table" in str(oe).lower():
             error_reason = "table_not_found"
-        errorLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(oe), "reason": error_reason})
+        errorLog(MODULE_NAME, error_msg, details={
+            "entry_id": entry.id,
+            "tenant_id": entry.tenantId,
+            "entity_type": entry.entityType.value,
+            "entity_id": entry.entityId,
+            "operation_type": entry.operationType.value,
+            "error": str(oe),
+            "reason": error_reason
+        })
         return False, error_reason
     except RuntimeError as e:
         if "Unexpected ASGI message 'websocket.send'" in str(e):
@@ -688,8 +713,17 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
             errorLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(e)})
             return False, "generic_runtime_error"
     except Exception as e:
-        error_msg = f"Generic error processing sync entry {entry.id} for tenant {entry.tenantId}: {str(e)}"
-        errorLog(MODULE_NAME, error_msg, details={"entry": entry.model_dump(), "error": str(e)})
+        error_msg = f"❌ SYNC GENERIC ERROR: Generic error processing sync entry {entry.id} for tenant {entry.tenantId}: {str(e)}"
+        errorLog(MODULE_NAME, error_msg, details={
+            "entry_id": entry.id,
+            "tenant_id": entry.tenantId,
+            "entity_type": entry.entityType.value,
+            "entity_id": entry.entityId,
+            "operation_type": entry.operationType.value,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "payload_type": type(entry.payload).__name__ if entry.payload else "None"
+        })
         return False, "generic_processing_error"
     finally:
         if db:

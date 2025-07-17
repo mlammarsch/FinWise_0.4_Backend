@@ -261,7 +261,7 @@ class TransactionPayload(BaseModel):
     reconciled: Optional[bool] = False
     toCategoryId: Optional[str] = None
     payee: Optional[str] = None
-    recipient_id: Optional[str] = Field(default=None, alias="recipientId")  # Renamed to snake_case
+    recipientId: Optional[str] = None  # Keep consistent with frontend and database
     updated_at: Optional[datetime.datetime] = None
 
     class Config:

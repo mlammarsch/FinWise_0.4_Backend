@@ -110,13 +110,47 @@ async def websocket_endpoint(
                         # This is a synchronous call within an async function.
                         # For long-running tasks, consider background tasks.
                         # The process_sync_entry now returns a tuple: (bool_success, str_reason_if_failed)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"🚀 PROCESSING: Starting sync entry processing for tenant {tenant_id}, entity {sync_entry_message.payload.entityType.value} {sync_entry_message.payload.entityId}",
+                            details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id, "operation": sync_entry_message.payload.operationType.value}
+                        )
+
+                        # 🔍 DIAGNOSE: Check WebSocket state before sync processing
+                        ws_state_before = {
+                            "websocket_exists": websocket is not None,
+                            "websocket_client_state": getattr(websocket, 'client_state', None),
+                            "websocket_app_state": getattr(websocket, 'application_state', None),
+                            "connection_manager_has_connection": tenant_id in manager.active_connections and websocket in manager.active_connections.get(tenant_id, set()),
+                            "connection_health": manager.connection_health.get(websocket, False)
+                        }
+                        debugLog(
+                            "WebSocketEndpoints",
+                            f"🔍 DIAGNOSE: WebSocket state BEFORE sync processing for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id, "websocket_state": ws_state_before}
+                        )
+
                         success, reason_or_detail = await sync_service.process_sync_entry(sync_entry_message.payload, source_websocket=websocket)
+
+                        # 🔍 DIAGNOSE: Check WebSocket state after sync processing
+                        ws_state_after = {
+                            "websocket_exists": websocket is not None,
+                            "websocket_client_state": getattr(websocket, 'client_state', None),
+                            "websocket_app_state": getattr(websocket, 'application_state', None),
+                            "connection_manager_has_connection": tenant_id in manager.active_connections and websocket in manager.active_connections.get(tenant_id, set()),
+                            "connection_health": manager.connection_health.get(websocket, False)
+                        }
+                        debugLog(
+                            "WebSocketEndpoints",
+                            f"🔍 DIAGNOSE: WebSocket state AFTER sync processing for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id, "websocket_state": ws_state_after, "sync_success": success}
+                        )
 
                         if success:
                             infoLog(
                                 "WebSocketEndpoints",
-                                f"Successfully processed sync entry {sync_entry_message.payload.id} for tenant {tenant_id}",
-                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id}
+                                f"✅ SUCCESS: Successfully processed sync entry {sync_entry_message.payload.id} for tenant {tenant_id}",
+                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id, "entity_type": sync_entry_message.payload.entityType.value, "entity_id": sync_entry_message.payload.entityId}
                             )
                             ack_message = SyncAckMessage(
                                 id=sync_entry_message.payload.id,
@@ -124,12 +158,17 @@ async def websocket_endpoint(
                                 entityType=sync_entry_message.payload.entityType,
                                 operationType=sync_entry_message.payload.operationType
                             )
-                            await manager.send_personal_json_message(ack_message.model_dump(), websocket)
+                            try:
+                                await manager.send_personal_json_message(ack_message.model_dump(), websocket)
+                            except (RuntimeError, WebSocketDisconnect) as e:
+                                warnLog("WebSocketEndpoints", f"Failed to send ACK due to WebSocket error: {e}", details={"entry_id": sync_entry_message.payload.id, "error": str(e)})
+                            except Exception as e:
+                                errorLog("WebSocketEndpoints", f"Unexpected error sending ACK: {e}", details={"entry_id": sync_entry_message.payload.id, "error": str(e)})
                         else:
                             errorLog(
                                 "WebSocketEndpoints",
-                                f"Failed to process sync entry {sync_entry_message.payload.id} for tenant {tenant_id}. Reason: {reason_or_detail}",
-                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id, "reason": reason_or_detail}
+                                f"❌ FAILED: Failed to process sync entry {sync_entry_message.payload.id} for tenant {tenant_id}. Reason: {reason_or_detail}",
+                                details={"tenant_id": tenant_id, "entry_id": sync_entry_message.payload.id, "entity_type": sync_entry_message.payload.entityType.value, "entity_id": sync_entry_message.payload.entityId, "operation": sync_entry_message.payload.operationType.value, "reason": reason_or_detail}
                             )
                             nack_message = SyncNackMessage(
                                 id=sync_entry_message.payload.id,
@@ -139,7 +178,12 @@ async def websocket_endpoint(
                                 reason=reason_or_detail if reason_or_detail else "processing_error",
                                 detail=f"Failed to process sync entry {sync_entry_message.payload.id}" # Can be more specific if needed
                             )
-                            await manager.send_personal_json_message(nack_message.model_dump(), websocket)
+                            try:
+                                await manager.send_personal_json_message(nack_message.model_dump(), websocket)
+                            except (RuntimeError, WebSocketDisconnect) as e:
+                                warnLog("WebSocketEndpoints", f"Failed to send NACK due to WebSocket error: {e}", details={"entry_id": sync_entry_message.payload.id, "error": str(e)})
+                            except Exception as e:
+                                errorLog("WebSocketEndpoints", f"Unexpected error sending NACK: {e}", details={"entry_id": sync_entry_message.payload.id, "error": str(e)})
 
                     except ValidationError as ve:
                         error_detail_for_client = f"Validation error for sync entry: {str(ve)}"
@@ -159,9 +203,19 @@ async def websocket_endpoint(
                                 reason="validation_error",
                                 detail=error_detail_for_client
                             )
-                            await manager.send_personal_json_message(nack_validation_message.model_dump(), websocket)
+                            try:
+                                await manager.send_personal_json_message(nack_validation_message.model_dump(), websocket)
+                            except (RuntimeError, WebSocketDisconnect) as e:
+                                warnLog("WebSocketEndpoints", f"Failed to send validation NACK due to WebSocket error: {e}", details={"error": str(e)})
+                            except Exception as e:
+                                errorLog("WebSocketEndpoints", f"Unexpected error sending validation NACK: {e}", details={"error": str(e)})
                         except Exception: # Fallback if payload parsing for NACK fails
-                             await manager.send_personal_json_message({"type": "sync_nack", "id": message_data.get("payload", {}).get("id", "unknown"), "status": "failed", "reason": "validation_error", "detail": "Invalid message structure."}, websocket)
+                            try:
+                                await manager.send_personal_json_message({"type": "sync_nack", "id": message_data.get("payload", {}).get("id", "unknown"), "status": "failed", "reason": "validation_error", "detail": "Invalid message structure."}, websocket)
+                            except (RuntimeError, WebSocketDisconnect) as e:
+                                warnLog("WebSocketEndpoints", f"Failed to send fallback validation NACK due to WebSocket error: {e}", details={"error": str(e)})
+                            except Exception as e:
+                                errorLog("WebSocketEndpoints", f"Unexpected error sending fallback validation NACK: {e}", details={"error": str(e)})
 
                     except Exception as proc_e: # Catch errors during processing
                         error_detail_for_client = f"Error processing sync entry: {str(proc_e)}"
@@ -189,9 +243,12 @@ async def websocket_endpoint(
                                 reason="processing_error",
                                 detail=error_detail_for_client
                             )
-                            await manager.send_personal_json_message(nack_processing_message.model_dump(), websocket)
-                        except Exception: # Fallback if payload parsing for NACK fails
-                            await manager.send_personal_json_message({"type": "sync_nack", "id": message_data.get("payload", {}).get("id", "unknown"), "status": "failed", "reason": "processing_error", "detail": "Internal server error during processing."}, websocket)
+                            try:
+                                await manager.send_personal_json_message(nack_processing_message.model_dump(), websocket)
+                            except (RuntimeError, WebSocketDisconnect) as e:
+                                warnLog("WebSocketEndpoints", f"Failed to send processing NACK due to WebSocket error: {e}", details={"error": str(e)})
+                            except Exception as e:
+                                errorLog("WebSocketEndpoints", f"Unexpected error sending processing NACK: {e}", details={"error": str(e)})
 
 
                 elif message_type == "request_initial_data":
