@@ -34,16 +34,16 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
     ) -> Transaction:
         """Creates a new Transaction with tenant context and recipientId handling."""
 
-        # Handle recipient_id and payee field logic
+        # Handle recipientId and payee field logic
         payee_value = obj_in.payee
-        if obj_in.recipient_id:
-            # If recipient_id is provided, lookup the recipient name for payee
-            recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipient_id).first()
+        if obj_in.recipientId:
+            # If recipientId is provided, lookup the recipient name for payee
+            recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipientId).first()
             if recipient:
                 payee_value = recipient.name
-                debugLog(MODULE_NAME, f"Set payee to recipient name: {payee_value}", details={"recipient_id": obj_in.recipient_id})
+                debugLog(MODULE_NAME, f"Set payee to recipient name: {payee_value}", details={"recipientId": obj_in.recipientId})
             else:
-                errorLog(MODULE_NAME, f"Recipient not found for ID: {obj_in.recipient_id}")
+                errorLog(MODULE_NAME, f"Recipient not found for ID: {obj_in.recipientId}")
 
         db_transaction = Transaction(
             id=obj_in.id,
@@ -65,16 +65,16 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
             reconciled=obj_in.reconciled or False,
             toCategoryId=obj_in.toCategoryId,
             payee=payee_value,
-            recipientId=obj_in.recipient_id,  # Store the recipientId
-            createdAt=datetime.utcnow(),
-            updatedAt=obj_in.updated_at or datetime.utcnow(),
+            recipientId=obj_in.recipientId,  # Store the recipientId
+            createdAt=obj_in.createdAt or datetime.utcnow(),  # Verwende createdAt aus Payload falls vorhanden
+            updatedAt=obj_in.updatedAt or datetime.utcnow(),  # Korrigiert: camelCase
         )
 
         db.add(db_transaction)
         db.commit()
         db.refresh(db_transaction)
 
-        infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id} with recipientId: {obj_in.recipient_id}")
+        infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id} with recipientId: {obj_in.recipientId}")
         return db_transaction
 
     def update(
@@ -86,16 +86,16 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
     ) -> Transaction:
         """Updates an existing Transaction with recipientId handling."""
 
-        # Handle recipient_id and payee field logic
+        # Handle recipientId and payee field logic
         payee_value = obj_in.payee
-        if obj_in.recipient_id:
-            # If recipient_id is provided, lookup the recipient name for payee
-            recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipient_id).first()
+        if obj_in.recipientId:
+            # If recipientId is provided, lookup the recipient name for payee
+            recipient = db.query(Recipient).filter(Recipient.id == obj_in.recipientId).first()
             if recipient:
                 payee_value = recipient.name
-                debugLog(MODULE_NAME, f"Updated payee to recipient name: {payee_value}", details={"recipient_id": obj_in.recipient_id})
+                debugLog(MODULE_NAME, f"Updated payee to recipient name: {payee_value}", details={"recipientId": obj_in.recipientId})
             else:
-                errorLog(MODULE_NAME, f"Recipient not found for ID: {obj_in.recipient_id}")
+                errorLog(MODULE_NAME, f"Recipient not found for ID: {obj_in.recipientId}")
 
         # Update all fields
         db_obj.accountId = obj_in.accountId
@@ -116,18 +116,18 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
         db_obj.reconciled = obj_in.reconciled or False
         db_obj.toCategoryId = obj_in.toCategoryId
         db_obj.payee = payee_value
-        db_obj.recipientId = obj_in.recipient_id  # Update the recipientId
+        db_obj.recipientId = obj_in.recipientId  # Update the recipientId
 
         # Explicitly set updatedAt from payload if provided for LWW conflict resolution
-        if obj_in.updated_at:
-            db_obj.updatedAt = obj_in.updated_at
+        if obj_in.updatedAt:
+            db_obj.updatedAt = obj_in.updatedAt
         else:
             db_obj.updatedAt = datetime.utcnow()
 
         db.commit()
         db.refresh(db_obj)
 
-        infoLog(MODULE_NAME, f"Updated Transaction {db_obj.id} with recipientId: {obj_in.recipient_id}")
+        infoLog(MODULE_NAME, f"Updated Transaction {db_obj.id} with recipientId: {obj_in.recipientId}")
         return db_obj
 
     def get(self, db: Session, id: str) -> Optional[Transaction]:

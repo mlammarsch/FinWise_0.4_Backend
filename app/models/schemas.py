@@ -178,6 +178,7 @@ class TransactionType(str, enum.Enum):
 class TransactionBase(BaseModel):
     accountId: str
     categoryId: str | None = None
+    recipientId: str | None = None  # Korrigiert: camelCase statt snake_case
     date: str  # ISO 8601 date string
     valueDate: str  # ISO 8601 date string
     amount: Decimal
@@ -194,19 +195,20 @@ class TransactionBase(BaseModel):
     reconciled: bool = False
     toCategoryId: str | None = None
     payee: str | None = None
-    recipient_id: Optional[str] = None
 
 class TransactionCreate(TransactionBase):
     id: str | None = None
-    updated_at: datetime | None = None
+    createdAt: datetime | None = None  # Hinzugefügt für korrekte Sortierung
+    updatedAt: datetime | None = None  # Korrigiert: camelCase
 
 class TransactionUpdate(TransactionBase):
-    updated_at: datetime | None = None
+    createdAt: datetime | None = None  # Hinzugefügt für korrekte Sortierung
+    updatedAt: datetime | None = None  # Korrigiert: camelCase
 
 class Transaction(TransactionBase):
     id: str
-    createdAt: datetime
-    updatedAt: datetime
+    createdAt: datetime  # Für korrekte Sortierung bei gleichem Datum
+    updatedAt: datetime  # Korrigiert: camelCase
 
     class Config:
         from_attributes = True
