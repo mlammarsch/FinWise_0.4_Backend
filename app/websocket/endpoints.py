@@ -12,7 +12,8 @@ from app.websocket.connection_manager import manager
 from app.websocket.schemas import (
     BackendStatusMessage, ProcessSyncEntryMessage, SyncAckMessage, SyncNackMessage,
     RequestInitialDataMessage, InitialDataLoadMessage, ServerEventType, # Import new schemas for initial data load
-    DataStatusRequestMessage, DataStatusResponseMessage # Import new schemas for data status
+    DataStatusRequestMessage, DataStatusResponseMessage, # Import new schemas for data status
+    ProcessSyncQueueMessage, SyncQueueStatusMessage # Import new schemas for staged sync
 )
 from app.services import sync_service # Import the new sync service
 from app.utils.logger import debugLog, errorLog, infoLog, warnLog # Added warnLog
@@ -110,9 +111,15 @@ async def websocket_endpoint(
                         # This is a synchronous call within an async function.
                         # For long-running tasks, consider background tasks.
                         # The process_sync_entry now returns a tuple: (bool_success, str_reason_if_failed)
+                        # First, add the entry to the sync queue for tracking
+                        sync_service.add_to_sync_queue(tenant_id, sync_entry_message.payload)
+
                         success, reason_or_detail = await sync_service.process_sync_entry(sync_entry_message.payload, source_websocket=websocket)
 
                         if success:
+                            # Remove from queue on success
+                            sync_service.remove_from_sync_queue(tenant_id, sync_entry_message.payload.id)
+
                             infoLog(
                                 "WebSocketEndpoints",
                                 f"Successfully processed sync entry {sync_entry_message.payload.id} for tenant {tenant_id}",
@@ -126,6 +133,9 @@ async def websocket_endpoint(
                             )
                             await manager.send_personal_json_message(ack_message.model_dump(), websocket)
                         else:
+                            # Add to failed entries for retry logic
+                            sync_service.add_failed_entry(tenant_id, sync_entry_message.payload.id, reason_or_detail or "processing_error")
+
                             errorLog(
                                 "WebSocketEndpoints",
                                 f"Failed to process sync entry {sync_entry_message.payload.id} for tenant {tenant_id}. Reason: {reason_or_detail}",
@@ -290,6 +300,170 @@ async def websocket_endpoint(
                             "WebSocketEndpoints",
                             f"Error processing data_status_request for tenant {tenant_id}: {str(e_data_status)}",
                             details={"tenant_id": tenant_id, "error": str(e_data_status), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+
+                elif message_type == "process_sync_queue":
+                    try:
+                        sync_queue_message = ProcessSyncQueueMessage(**message_data)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received process_sync_queue for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "use_staged_sync": sync_queue_message.use_staged_sync}
+                        )
+
+                        # Process the sync queue using staged synchronization if requested
+                        if sync_queue_message.use_staged_sync:
+                            # Use the new staged sync processing
+                            queue_result = await sync_service.process_sync_queue_for_tenant(tenant_id, source_websocket=websocket)
+                        else:
+                            # Use regular sync processing (fallback)
+                            queue_result = await sync_service.process_sync_queue_for_tenant(tenant_id, source_websocket=websocket)
+
+                        # Send response with queue processing results
+                        response_message = SyncQueueStatusMessage(
+                            tenant_id=tenant_id,
+                            processed_count=queue_result.get("processed", 0),
+                            successful_count=queue_result.get("successful", 0),
+                            failed_count=queue_result.get("failed", 0),
+                            failed_entries=queue_result.get("failed_entries", []),
+                            has_pending_entries=queue_result.get("failed", 0) > 0
+                        )
+
+                        await manager.send_personal_json_message(response_message.model_dump(), websocket)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Sent sync_queue_status to client for tenant {tenant_id}. Processed: {queue_result.get('processed', 0)}, Success: {queue_result.get('successful', 0)}, Failed: {queue_result.get('failed', 0)}",
+                            details={"tenant_id": tenant_id, "queue_result": queue_result}
+                        )
+
+                    except ValidationError as ve:
+                        error_detail_for_client = f"Validation error for process_sync_queue: {str(ve)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Validation error for process_sync_queue message from tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "error": ve.errors(), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+                    except Exception as e_sync_queue:
+                        error_detail_for_client = f"Error processing sync queue: {str(e_sync_queue)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error processing sync queue for tenant {tenant_id}: {str(e_sync_queue)}",
+                            details={"tenant_id": tenant_id, "error": str(e_sync_queue), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+
+                elif message_type == "retry_failed_entries":
+                    try:
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received retry_failed_entries for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id}
+                        )
+
+                        # Retry failed entries for the tenant
+                        retry_result = await sync_service.retry_failed_entries_for_tenant(tenant_id, source_websocket=websocket)
+
+                        # Send response with retry results
+                        response_message = SyncQueueStatusMessage(
+                            tenant_id=tenant_id,
+                            processed_count=retry_result.get("retried", 0),
+                            successful_count=retry_result.get("successful", 0),
+                            failed_count=retry_result.get("failed", 0),
+                            failed_entries=retry_result.get("failed_entries", []),
+                            has_pending_entries=retry_result.get("failed", 0) > 0
+                        )
+
+                        await manager.send_personal_json_message(response_message.model_dump(), websocket)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Sent retry results to client for tenant {tenant_id}. Retried: {retry_result.get('retried', 0)}, Success: {retry_result.get('successful', 0)}, Failed: {retry_result.get('failed', 0)}",
+                            details={"tenant_id": tenant_id, "retry_result": retry_result}
+                        )
+
+                    except Exception as e_retry:
+                        error_detail_for_client = f"Error retrying failed entries: {str(e_retry)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error retrying failed entries for tenant {tenant_id}: {str(e_retry)}",
+                            details={"tenant_id": tenant_id, "error": str(e_retry)}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+
+                elif message_type == "get_sync_queue_status":
+                    try:
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received get_sync_queue_status for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id}
+                        )
+
+                        # Get sync queue status for the tenant
+                        queue_status = sync_service.get_sync_queue_status(tenant_id)
+
+                        # Send response with queue status
+                        response_message = {
+                            "type": "sync_queue_status_info",
+                            "tenant_id": tenant_id,
+                            "pending_count": queue_status.get("pending_count", 0),
+                            "failed_count": queue_status.get("failed_count", 0),
+                            "retryable_count": queue_status.get("retryable_count", 0),
+                            "has_pending_entries": queue_status.get("has_pending_entries", False)
+                        }
+
+                        await manager.send_personal_json_message(response_message, websocket)
+                        debugLog(
+                            "WebSocketEndpoints",
+                            f"Sent sync queue status to client for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "queue_status": queue_status}
+                        )
+
+                    except Exception as e_status:
+                        error_detail_for_client = f"Error getting sync queue status: {str(e_status)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error getting sync queue status for tenant {tenant_id}: {str(e_status)}",
+                            details={"tenant_id": tenant_id, "error": str(e_status)}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+
+                elif message_type == "trigger_cyclic_sync":
+                    try:
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received trigger_cyclic_sync for tenant {tenant_id}",
+                            details={"tenant_id": tenant_id}
+                        )
+
+                        # Trigger cyclic sync if needed
+                        sync_result = await sync_service.trigger_cyclic_sync_if_needed(tenant_id, source_websocket=websocket)
+
+                        # Send response with sync results
+                        response_message = {
+                            "type": "cyclic_sync_result",
+                            "tenant_id": tenant_id,
+                            "triggered": sync_result.get("triggered", False),
+                            "total_processed": sync_result.get("total_processed", 0),
+                            "total_successful": sync_result.get("total_successful", 0),
+                            "total_failed": sync_result.get("total_failed", 0),
+                            "reason": sync_result.get("reason"),
+                            "error": sync_result.get("error")
+                        }
+
+                        await manager.send_personal_json_message(response_message, websocket)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Sent cyclic sync result to client for tenant {tenant_id}. Triggered: {sync_result.get('triggered', False)}, Processed: {sync_result.get('total_processed', 0)}",
+                            details={"tenant_id": tenant_id, "sync_result": sync_result}
+                        )
+
+                    except Exception as e_cyclic:
+                        error_detail_for_client = f"Error triggering cyclic sync: {str(e_cyclic)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error triggering cyclic sync for tenant {tenant_id}: {str(e_cyclic)}",
+                            details={"tenant_id": tenant_id, "error": str(e_cyclic)}
                         )
                         await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
 

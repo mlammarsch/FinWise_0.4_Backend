@@ -74,7 +74,7 @@ class CRUDTransaction(CRUDBase[Transaction, schemas.TransactionCreate, schemas.T
         db.commit()
         db.refresh(db_transaction)
 
-        infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id} with recipientId: {obj_in.recipientId}")
+        infoLog(MODULE_NAME, f"Created Transaction {db_transaction.id} with recipientId: {obj_in.recipient_id}")
         return db_transaction
 
     def update(

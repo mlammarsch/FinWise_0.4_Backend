@@ -32,7 +32,7 @@ def create_planning_transaction(  # Changed to sync, WebSocket logic moved to se
         accountId=planning_transaction_in.accountId,
         categoryId=planning_transaction_in.categoryId,
         tagIds=planning_transaction_in.tagIds,
-        recipientId=planning_transaction_in.recipientId,
+        recipientId=planning_transaction_in.recipient_id,
         amount=planning_transaction_in.amount,
         amountType=planning_transaction_in.amountType,
         approximateAmount=planning_transaction_in.approximateAmount,
@@ -84,7 +84,7 @@ def update_planning_transaction(
     db_planning_transaction.accountId = planning_transaction_in.accountId
     db_planning_transaction.categoryId = planning_transaction_in.categoryId
     db_planning_transaction.tagIds = planning_transaction_in.tagIds
-    db_planning_transaction.recipientId = planning_transaction_in.recipientId
+    db_planning_transaction.recipientId = planning_transaction_in.recipient_id
     db_planning_transaction.amount = planning_transaction_in.amount
     db_planning_transaction.amountType = planning_transaction_in.amountType
     db_planning_transaction.approximateAmount = planning_transaction_in.approximateAmount

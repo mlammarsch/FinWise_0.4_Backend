@@ -213,7 +213,7 @@ class PlanningTransactionPayload(BaseModel):
     accountId: str
     categoryId: Optional[str] = None
     tagIds: list[str] = Field(default_factory=list) # Array of tag IDs
-    recipientId: Optional[str] = None
+    recipient_id: Optional[str] = Field(default=None, alias="recipientId")
     amount: float
     amountType: str # 'EXACT', 'APPROXIMATE', 'RANGE'
     approximateAmount: Optional[float] = None
@@ -594,11 +594,49 @@ ServerToClientMessage = Union[
     ConnectionStatusResponseMessage
 ]
 
+# Schemas for staged synchronization and queue management
+class ProcessSyncQueueMessage(BaseModel):
+    """
+    Message sent from frontend to backend to request processing of the sync queue.
+    """
+    type: Literal["process_sync_queue"] = "process_sync_queue"
+    tenant_id: str = Field(..., description="Tenant ID for the sync queue processing")
+    use_staged_sync: bool = Field(default=True, description="Whether to use staged synchronization (Recipients first, then Transactions)")
+
+
+class SyncQueueStatusMessage(BaseModel):
+    """
+    Message sent from backend to frontend with sync queue processing results.
+    """
+    type: Literal["sync_queue_status"] = "sync_queue_status"
+    tenant_id: str = Field(..., description="Tenant ID for the sync queue status")
+    processed_count: int = Field(..., description="Total number of entries processed")
+    successful_count: int = Field(..., description="Number of successfully processed entries")
+    failed_count: int = Field(..., description="Number of failed entries")
+    failed_entries: list[str] = Field(default_factory=list, description="List of failed entry IDs")
+    has_pending_entries: bool = Field(..., description="Whether there are still pending entries in the queue")
+
+
 ClientToServerMessage = Union[
     ProcessSyncEntryMessage,
     RequestInitialDataMessage,
     DataStatusRequestMessage,
+    ProcessSyncQueueMessage,
     PingMessage,
     ConnectionStatusRequestMessage
+]
+
+ServerToClientMessage = Union[
+    DataUpdateNotificationMessage,
+    BackendStatusMessage,
+    SyncAckMessage,
+    SyncNackMessage,
+    InitialDataLoadMessage,
+    DataStatusResponseMessage,
+    ConflictReportMessage,
+    SyncStatusMessage,
+    SyncQueueStatusMessage,
+    PongMessage,
+    ConnectionStatusResponseMessage
 ]
 # For now, we'll handle DataUpdateNotificationMessage and InitialDataLoadMessage specifically.

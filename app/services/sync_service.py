@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from typing import Optional  # Added for Optional WebSocket
+from typing import Optional, Dict, List, Tuple  # Added for Optional WebSocket and type hints
 from fastapi import WebSocket  # Added for WebSocket type hint
 from app.websocket.schemas import (
     SyncQueueEntry, EntityType, SyncOperationType,
@@ -600,7 +600,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
                     if isinstance(payload, TransactionPayload) and normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_transaction = crud_transaction.update(db=db, db_obj=existing_transaction, obj_in=payload)
+                        updated_transaction = crud_transaction.update_transaction(db=db, db_obj=existing_transaction, obj_in=payload)
                         infoLog(MODULE_NAME, f"Applied CREATE as UPDATE (LWW win) for Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(updated_transaction)
                     else:
@@ -623,7 +623,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                     # LWW: Compare timestamps
                     normalized_db_updated_at = normalize_datetime_for_comparison(existing_transaction.updatedAt)
                     if normalized_incoming_updated_at and normalized_db_updated_at and normalized_incoming_updated_at > normalized_db_updated_at:
-                        updated_transaction = crud_transaction.update(db=db, db_obj=existing_transaction, obj_in=payload)
+                        updated_transaction = crud_transaction.update_transaction(db=db, db_obj=existing_transaction, obj_in=payload)
                         infoLog(MODULE_NAME, f"Applied UPDATE (LWW win) for Transaction {entity_id}", details=payload)
                         notification_data = TransactionPayload.model_validate(updated_transaction)
                     else:
@@ -637,7 +637,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
             elif operation_type == SyncOperationType.DELETE:
                 existing_transaction = crud_transaction.get_transaction(db=db, id=entity_id)
                 if existing_transaction:
-                    crud_transaction.delete(db=db, id=entity_id)
+                    crud_transaction.delete_transaction(db=db, id=entity_id)
                     infoLog(MODULE_NAME, f"Deleted Transaction {entity_id}")
                     notification_data = DeletePayload(id=entity_id)
                 else:
@@ -1005,3 +1005,381 @@ async def detect_conflicts(tenant_id: str, client_checksums: dict) -> dict:
             details={"conflicts": len(conflicts), "local_only": len(local_only), "server_only": len(server_only)})
 
     return result
+
+async def process_sync_entries_staged(entries: list[SyncQueueEntry], source_websocket: Optional[WebSocket] = None) -> tuple[list[str], list[str]]:
+    """
+    Processes sync entries in two stages to handle dependencies:
+    Stage 1: Recipients, Categories, CategoryGroups, Accounts, AccountGroups, Tags, AutomationRules
+    Stage 2: Transactions, PlanningTransactions
+
+    Returns: (successful_entry_ids, failed_entry_ids)
+    """
+    debugLog(MODULE_NAME, f"Starting staged sync processing for {len(entries)} entries")
+
+    # Separate entries by stage
+    stage1_entities = {EntityType.RECIPIENT, EntityType.CATEGORY, EntityType.CATEGORY_GROUP,
+                      EntityType.ACCOUNT, EntityType.ACCOUNT_GROUP, EntityType.TAG, EntityType.AUTOMATION_RULE}
+    stage2_entities = {EntityType.TRANSACTION, EntityType.PLANNING_TRANSACTION}
+
+    stage1_entries = [entry for entry in entries if entry.entityType in stage1_entities]
+    stage2_entries = [entry for entry in entries if entry.entityType in stage2_entities]
+    other_entries = [entry for entry in entries if entry.entityType not in stage1_entities and entry.entityType not in stage2_entities]
+
+    successful_ids = []
+    failed_ids = []
+
+    # Stage 1: Process master data first
+    if stage1_entries:
+        infoLog(MODULE_NAME, f"Stage 1: Processing {len(stage1_entries)} master data entries")
+        for entry in stage1_entries:
+            try:
+                success, reason = await process_sync_entry(entry, source_websocket)
+                if success:
+                    successful_ids.append(entry.id)
+                    debugLog(MODULE_NAME, f"Stage 1 success: {entry.entityType.value} {entry.entityId}")
+                else:
+                    failed_ids.append(entry.id)
+                    errorLog(MODULE_NAME, f"Stage 1 failed: {entry.entityType.value} {entry.entityId} - {reason}")
+            except Exception as e:
+                failed_ids.append(entry.id)
+                errorLog(MODULE_NAME, f"Stage 1 exception: {entry.entityType.value} {entry.entityId} - {str(e)}")
+
+    # Stage 2: Process transactions after master data
+    if stage2_entries:
+        infoLog(MODULE_NAME, f"Stage 2: Processing {len(stage2_entries)} transaction entries")
+        for entry in stage2_entries:
+            try:
+                success, reason = await process_sync_entry(entry, source_websocket)
+                if success:
+                    successful_ids.append(entry.id)
+                    debugLog(MODULE_NAME, f"Stage 2 success: {entry.entityType.value} {entry.entityId}")
+                else:
+                    failed_ids.append(entry.id)
+                    errorLog(MODULE_NAME, f"Stage 2 failed: {entry.entityType.value} {entry.entityId} - {reason}")
+            except Exception as e:
+                failed_ids.append(entry.id)
+                errorLog(MODULE_NAME, f"Stage 2 exception: {entry.entityType.value} {entry.entityId} - {str(e)}")
+
+    # Process any other entities
+    if other_entries:
+        infoLog(MODULE_NAME, f"Processing {len(other_entries)} other entries")
+        for entry in other_entries:
+            try:
+                success, reason = await process_sync_entry(entry, source_websocket)
+                if success:
+                    successful_ids.append(entry.id)
+                else:
+                    failed_ids.append(entry.id)
+            except Exception as e:
+                failed_ids.append(entry.id)
+                errorLog(MODULE_NAME, f"Other entry exception: {entry.entityType.value} {entry.entityId} - {str(e)}")
+
+    infoLog(MODULE_NAME, f"Staged sync completed: {len(successful_ids)} successful, {len(failed_ids)} failed")
+    return successful_ids, failed_ids
+
+
+# In-memory queue storage (in production, use Redis or database)
+_sync_queues: Dict[str, List[SyncQueueEntry]] = {}
+_failed_entries: Dict[str, List[dict]] = {}  # tenant_id -> list of failed entry info
+
+
+def add_to_sync_queue(tenant_id: str, entry: SyncQueueEntry):
+    """Add a sync entry to the tenant's queue."""
+    if tenant_id not in _sync_queues:
+        _sync_queues[tenant_id] = []
+    _sync_queues[tenant_id].append(entry)
+    debugLog(MODULE_NAME, f"Added entry {entry.id} to sync queue for tenant {tenant_id}")
+
+
+def get_pending_sync_entries_for_tenant(tenant_id: str) -> List[SyncQueueEntry]:
+    """Get all pending sync entries for a tenant."""
+    return _sync_queues.get(tenant_id, [])
+
+
+def remove_from_sync_queue(tenant_id: str, entry_id: str):
+    """Remove a successfully processed entry from the queue."""
+    if tenant_id in _sync_queues:
+        _sync_queues[tenant_id] = [entry for entry in _sync_queues[tenant_id] if entry.id != entry_id]
+
+
+def add_failed_entry(tenant_id: str, entry_id: str, error: str, retry_count: int = 0):
+    """Add a failed entry to the failed entries tracking."""
+    if tenant_id not in _failed_entries:
+        _failed_entries[tenant_id] = []
+
+    failed_info = {
+        "entry_id": entry_id,
+        "error": error,
+        "retry_count": retry_count,
+        "last_attempt": int(time.time()),
+        "next_retry": int(time.time()) + (60 * (2 ** retry_count))  # Exponential backoff
+    }
+    _failed_entries[tenant_id].append(failed_info)
+
+
+def get_retryable_entries(tenant_id: str) -> List[str]:
+    """Get entry IDs that are ready for retry."""
+    if tenant_id not in _failed_entries:
+        return []
+
+    current_time = int(time.time())
+    retryable = []
+
+    for failed_info in _failed_entries[tenant_id]:
+        if (failed_info["retry_count"] < 3 and
+            current_time >= failed_info["next_retry"]):
+            retryable.append(failed_info["entry_id"])
+
+    return retryable
+
+
+async def process_sync_queue_for_tenant(tenant_id: str, source_websocket: Optional[WebSocket] = None) -> dict:
+    """
+    Processes all pending sync entries for a tenant using staged synchronization.
+    This function should be called when the frontend requests a full sync or when retrying failed entries.
+
+    Returns: {"processed": int, "successful": int, "failed": int, "failed_entries": list}
+    """
+    debugLog(MODULE_NAME, f"Processing sync queue for tenant {tenant_id}")
+
+    # Get pending entries from queue
+    pending_entries = get_pending_sync_entries_for_tenant(tenant_id)
+
+    if not pending_entries:
+        infoLog(MODULE_NAME, f"No pending sync entries for tenant {tenant_id}")
+        return {
+            "processed": 0,
+            "successful": 0,
+            "failed": 0,
+            "failed_entries": []
+        }
+
+    # Process entries using staged synchronization
+    successful_ids, failed_ids = await process_sync_entries_staged(pending_entries, source_websocket)
+
+    # Update queue state
+    for entry_id in successful_ids:
+        remove_from_sync_queue(tenant_id, entry_id)
+
+    for entry_id in failed_ids:
+        # Find the entry to get error details
+        failed_entry = next((e for e in pending_entries if e.id == entry_id), None)
+        if failed_entry:
+            add_failed_entry(tenant_id, entry_id, "processing_failed")
+
+    result = {
+        "processed": len(pending_entries),
+        "successful": len(successful_ids),
+        "failed": len(failed_ids),
+        "failed_entries": failed_ids
+    }
+
+    infoLog(MODULE_NAME, f"Queue processing completed for tenant {tenant_id}: {result}")
+    return result
+
+
+async def retry_failed_entries_for_tenant(tenant_id: str, source_websocket: Optional[WebSocket] = None) -> dict:
+    """
+    Retry failed sync entries that are ready for retry.
+
+    Returns: {"retried": int, "successful": int, "failed": int, "failed_entries": list}
+    """
+    debugLog(MODULE_NAME, f"Retrying failed entries for tenant {tenant_id}")
+
+    retryable_entry_ids = get_retryable_entries(tenant_id)
+
+    if not retryable_entry_ids:
+        debugLog(MODULE_NAME, f"No retryable entries for tenant {tenant_id}")
+        return {
+            "retried": 0,
+            "successful": 0,
+            "failed": 0,
+            "failed_entries": []
+        }
+
+    # Get the actual entries from the queue
+    pending_entries = get_pending_sync_entries_for_tenant(tenant_id)
+    retry_entries = [entry for entry in pending_entries if entry.id in retryable_entry_ids]
+
+    if not retry_entries:
+        debugLog(MODULE_NAME, f"No retry entries found in queue for tenant {tenant_id}")
+        return {
+            "retried": 0,
+            "successful": 0,
+            "failed": 0,
+            "failed_entries": []
+        }
+
+    # Process retry entries using staged synchronization
+    successful_ids, failed_ids = await process_sync_entries_staged(retry_entries, source_websocket)
+
+    # Update queue and failed entries state
+    for entry_id in successful_ids:
+        remove_from_sync_queue(tenant_id, entry_id)
+        # Remove from failed entries
+        if tenant_id in _failed_entries:
+            _failed_entries[tenant_id] = [f for f in _failed_entries[tenant_id] if f["entry_id"] != entry_id]
+
+    for entry_id in failed_ids:
+        # Update retry count for failed entries
+        if tenant_id in _failed_entries:
+            for failed_info in _failed_entries[tenant_id]:
+                if failed_info["entry_id"] == entry_id:
+                    failed_info["retry_count"] += 1
+                    failed_info["last_attempt"] = int(time.time())
+                    failed_info["next_retry"] = int(time.time()) + (60 * (2 ** failed_info["retry_count"]))
+                    break
+
+    result = {
+        "retried": len(retry_entries),
+        "successful": len(successful_ids),
+        "failed": len(failed_ids),
+        "failed_entries": failed_ids
+    }
+
+    infoLog(MODULE_NAME, f"Retry processing completed for tenant {tenant_id}: {result}")
+    return result
+
+
+def get_sync_queue_status(tenant_id: str) -> dict:
+    """
+    Get the current status of the sync queue for a tenant.
+
+    Returns: {"pending_count": int, "failed_count": int, "retryable_count": int}
+    """
+    pending_entries = get_pending_sync_entries_for_tenant(tenant_id)
+    failed_entries = _failed_entries.get(tenant_id, [])
+    retryable_entries = get_retryable_entries(tenant_id)
+
+    return {
+        "pending_count": len(pending_entries),
+        "failed_count": len(failed_entries),
+        "retryable_count": len(retryable_entries),
+        "has_pending_entries": len(pending_entries) > 0 or len(retryable_entries) > 0
+    }
+
+
+def should_retry_sync_entry(entry: SyncQueueEntry, retry_count: int, last_error: str) -> bool:
+    """
+    Determines if a sync entry should be retried based on the error type and retry count.
+    """
+    max_retries = 3
+
+    if retry_count >= max_retries:
+        return False
+
+    # Don't retry validation errors
+    if "validation_error" in last_error:
+        return False
+
+    # Don't retry if entity not found for UPDATE operations
+    if "not_found" in last_error and entry.operationType == SyncOperationType.UPDATE:
+        return False
+
+    # Retry database errors, websocket errors, and generic processing errors
+    retryable_errors = ["database_operational_error", "websocket_state_error", "generic_processing_error"]
+    return any(error in last_error for error in retryable_errors)
+
+
+
+async def notify_sync_status_change(tenant_id: str, websocket: Optional[WebSocket] = None):
+    """
+    Notifies the frontend about sync status changes.
+    """
+    try:
+        queue_status = get_sync_queue_status(tenant_id)
+
+        status_message = {
+            "type": "sync_status_update",
+            "tenant_id": tenant_id,
+            "pending_count": queue_status.get("pending_count", 0),
+            "failed_count": queue_status.get("failed_count", 0),
+            "retryable_count": queue_status.get("retryable_count", 0),
+            "has_pending_entries": queue_status.get("has_pending_entries", False),
+            "timestamp": int(time.time())
+        }
+
+        if websocket:
+            # Send to specific websocket
+            await websocket_manager_instance.send_personal_json_message(status_message, websocket)
+        else:
+            # Broadcast to all clients of the tenant
+            await websocket_manager_instance.broadcast_to_tenant_json(status_message, tenant_id)
+
+        debugLog(MODULE_NAME, f"Sent sync status update to tenant {tenant_id}", details=status_message)
+
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Failed to notify sync status change for tenant {tenant_id}: {str(e)}")
+
+
+async def check_and_retry_pending_entries():
+    """
+    Background task that periodically checks for retryable entries and processes them.
+    This should be called periodically (e.g., every 5 minutes) by a scheduler.
+    """
+    debugLog(MODULE_NAME, "Checking for retryable entries across all tenants")
+
+    for tenant_id in _sync_queues.keys():
+        try:
+            retryable_entries = get_retryable_entries(tenant_id)
+
+            if retryable_entries:
+                infoLog(MODULE_NAME, f"Found {len(retryable_entries)} retryable entries for tenant {tenant_id}")
+
+                # Process retryable entries
+                retry_result = await retry_failed_entries_for_tenant(tenant_id)
+
+                # Notify frontend about status change
+                await notify_sync_status_change(tenant_id)
+
+                infoLog(MODULE_NAME, f"Retry completed for tenant {tenant_id}: {retry_result}")
+
+        except Exception as e:
+            errorLog(MODULE_NAME, f"Error during retry check for tenant {tenant_id}: {str(e)}")
+
+
+def has_pending_sync_entries(tenant_id: str) -> bool:
+    """
+    Check if a tenant has pending sync entries that need processing.
+    This can be used by the frontend to determine if it should trigger a sync retry.
+    """
+    queue_status = get_sync_queue_status(tenant_id)
+    return queue_status.get("has_pending_entries", False)
+
+
+async def trigger_cyclic_sync_if_needed(tenant_id: str, websocket: Optional[WebSocket] = None):
+    """
+    Triggers a cyclic sync retry if there are pending entries.
+    This should be called by the frontend when it detects pending entries.
+    """
+    if not has_pending_sync_entries(tenant_id):
+        debugLog(MODULE_NAME, f"No pending entries for tenant {tenant_id}, skipping cyclic sync")
+        return {"triggered": False, "reason": "no_pending_entries"}
+
+    infoLog(MODULE_NAME, f"Triggering cyclic sync for tenant {tenant_id}")
+
+    try:
+        # First try to retry failed entries
+        retry_result = await retry_failed_entries_for_tenant(tenant_id, websocket)
+
+        # Then process any remaining queue entries
+        queue_result = await process_sync_queue_for_tenant(tenant_id, websocket)
+
+        # Notify about status change
+        await notify_sync_status_change(tenant_id, websocket)
+
+        combined_result = {
+            "triggered": True,
+            "retry_result": retry_result,
+            "queue_result": queue_result,
+            "total_processed": retry_result.get("retried", 0) + queue_result.get("processed", 0),
+            "total_successful": retry_result.get("successful", 0) + queue_result.get("successful", 0),
+            "total_failed": retry_result.get("failed", 0) + queue_result.get("failed", 0)
+        }
+
+        infoLog(MODULE_NAME, f"Cyclic sync completed for tenant {tenant_id}: {combined_result}")
+        return combined_result
+
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Error during cyclic sync for tenant {tenant_id}: {str(e)}")
+        return {"triggered": False, "error": str(e)}
