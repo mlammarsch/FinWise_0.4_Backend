@@ -151,9 +151,11 @@ def create_default_user_settings(db: Session, user_id: str) -> UserSettings:
     """Erstellt Default-Settings für einen neuen Benutzer"""
     debugLog(MODULE_NAME, f"Erstelle Default-Settings für neuen User {user_id}")
 
+    from app.models.schemas import LogLevel
+
     default_settings = UserSettingsCreate(
         user_id=user_id,
-        log_level="INFO",
+        log_level=LogLevel.INFO,
         log_categories=["store", "ui", "service"],
         history_retention_days=60
     )
