@@ -60,7 +60,13 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
         operation_type = entry.operationType
         payload = entry.payload  # This is AccountPayload or AccountGroupPayload or DeletePayload
         entity_id = entry.entityId
-        incoming_updated_at: Optional[datetime] = getattr(payload, 'updated_at', None) if payload else None
+        # Für Pydantic-Modelle mit Aliasen müssen wir die korrekten Attributnamen verwenden
+        incoming_updated_at: Optional[datetime] = None
+        if payload:
+            if hasattr(payload, 'updated_at'):
+                incoming_updated_at = payload.updated_at
+            elif hasattr(payload, 'updatedAt'):
+                incoming_updated_at = payload.updatedAt
         # Normalisiere incoming datetime für LWW-Vergleiche
         normalized_incoming_updated_at = normalize_datetime_for_comparison(incoming_updated_at)
 
@@ -663,7 +669,7 @@ async def process_sync_entry(entry: SyncQueueEntry, source_websocket: Optional[W
                 data=notification_data
             )
             await websocket_manager_instance.broadcast_json_to_tenant(
-                message.model_dump(),
+                message.model_dump(mode='json'),
                 entry.tenantId,
                 exclude_websocket=source_websocket
             )

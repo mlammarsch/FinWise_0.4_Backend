@@ -263,6 +263,8 @@ class TransactionPayload(BaseModel):
     payee: Optional[str] = None
     recipient_id: Optional[str] = Field(default=None, alias="recipientId")  # Renamed to snake_case
     updated_at: Optional[datetime.datetime] = None
+    createdAt: Optional[datetime.datetime] = None
+    updatedAt: Optional[datetime.datetime] = None
 
     class Config:
         use_enum_values = True
