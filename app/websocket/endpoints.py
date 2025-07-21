@@ -114,7 +114,11 @@ async def websocket_endpoint(
                         # First, add the entry to the sync queue for tracking
                         sync_service.add_to_sync_queue(tenant_id, sync_entry_message.payload)
 
-                        success, reason_or_detail = await sync_service.process_sync_entry(sync_entry_message.payload, source_websocket=websocket)
+                        # Use staged processing even for single entries to handle dependencies
+                        successful_ids, failed_ids = await sync_service.process_sync_entries_staged([sync_entry_message.payload], source_websocket=websocket)
+
+                        success = sync_entry_message.payload.id in successful_ids
+                        reason_or_detail = "processing_failed" if not success else None
 
                         if success:
                             # Remove from queue on success
