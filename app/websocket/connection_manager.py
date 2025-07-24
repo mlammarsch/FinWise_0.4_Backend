@@ -107,48 +107,214 @@ class ConnectionManager:
             )
 
     async def send_personal_message(self, message: str, websocket: WebSocket):
-        await websocket.send_text(message)
-        debugLog(
-            "ConnectionManager",
-            "Sent personal text message",
-            details={"client": websocket.client.host if websocket.client else "Unknown", "message_length": len(message)}
-        )
+        try:
+            # Prüfe WebSocket-Status vor dem Senden
+            if websocket.application_state is not None and hasattr(websocket.application_state, 'value'):
+                if websocket.application_state.value == 2:  # DISCONNECTED
+                    warnLog(
+                        "ConnectionManager",
+                        "Cannot send personal message - WebSocket is disconnected",
+                        details={"client": websocket.client.host if websocket.client else "Unknown"}
+                    )
+                    return
+
+            await websocket.send_text(message)
+            debugLog(
+                "ConnectionManager",
+                "Sent personal text message",
+                details={"client": websocket.client.host if websocket.client else "Unknown", "message_length": len(message)}
+            )
+        except RuntimeError as e:
+            if "Unexpected ASGI message 'websocket.send'" in str(e) or \
+               "Cannot call 'send' once a close message has been sent" in str(e):
+                warnLog(
+                    "ConnectionManager",
+                    f"WebSocket state error sending personal message: {e}",
+                    details={"client": websocket.client.host if websocket.client else "Unknown", "error": str(e)}
+                )
+            else:
+                errorLog(
+                    "ConnectionManager",
+                    f"Unexpected RuntimeError sending personal message: {e}",
+                    details={"client": websocket.client.host if websocket.client else "Unknown", "error": str(e)}
+                )
+        except Exception as e:
+            errorLog(
+                "ConnectionManager",
+                f"Unexpected error sending personal message: {e}",
+                details={"client": websocket.client.host if websocket.client else "Unknown", "error_type": type(e).__name__, "error": str(e)}
+            )
 
     async def send_personal_json_message(self, message: dict, websocket: WebSocket):
-        await websocket.send_json(message)
-        debugLog(
-            "ConnectionManager",
-            "Sent personal JSON message",
-            details={"client": websocket.client.host if websocket.client else "Unknown", "message_keys": list(message.keys())}
-        )
+        try:
+            # Prüfe WebSocket-Status vor dem Senden
+            if websocket.application_state is not None and hasattr(websocket.application_state, 'value'):
+                if websocket.application_state.value == 2:  # DISCONNECTED
+                    warnLog(
+                        "ConnectionManager",
+                        "Cannot send personal JSON message - WebSocket is disconnected",
+                        details={"client": websocket.client.host if websocket.client else "Unknown"}
+                    )
+                    return
+
+            await websocket.send_json(message)
+            debugLog(
+                "ConnectionManager",
+                "Sent personal JSON message",
+                details={"client": websocket.client.host if websocket.client else "Unknown", "message_keys": list(message.keys())}
+            )
+        except RuntimeError as e:
+            if "Unexpected ASGI message 'websocket.send'" in str(e) or \
+               "Cannot call 'send' once a close message has been sent" in str(e):
+                warnLog(
+                    "ConnectionManager",
+                    f"WebSocket state error sending personal JSON message: {e}",
+                    details={"client": websocket.client.host if websocket.client else "Unknown", "error": str(e)}
+                )
+            else:
+                errorLog(
+                    "ConnectionManager",
+                    f"Unexpected RuntimeError sending personal JSON message: {e}",
+                    details={"client": websocket.client.host if websocket.client else "Unknown", "error": str(e)}
+                )
+        except Exception as e:
+            errorLog(
+                "ConnectionManager",
+                f"Unexpected error sending personal JSON message: {e}",
+                details={"client": websocket.client.host if websocket.client else "Unknown", "error_type": type(e).__name__, "error": str(e)}
+            )
 
     async def broadcast_to_tenant(self, message: str, tenant_id: str):
         if tenant_id in self.active_connections:
-            for connection in self.active_connections[tenant_id]:
-                await connection.send_text(message)
+            sent_to_count = 0
+            failed_connections = []
+
+            for connection in self.active_connections[tenant_id].copy():  # Kopie für sichere Iteration
+                try:
+                    # Prüfe WebSocket-Status vor dem Senden
+                    if connection.application_state is not None and hasattr(connection.application_state, 'value'):
+                        if connection.application_state.value == 2:  # DISCONNECTED
+                            warnLog(
+                                "ConnectionManager",
+                                f"Skipping send to disconnected WebSocket for tenant {tenant_id}",
+                                details={"client": connection.client.host if connection.client else "Unknown"}
+                            )
+                            failed_connections.append(connection)
+                            continue
+
+                    await connection.send_text(message)
+                    sent_to_count += 1
+
+                except RuntimeError as e:
+                    if "Unexpected ASGI message 'websocket.send'" in str(e) or \
+                       "Cannot call 'send' once a close message has been sent" in str(e):
+                        warnLog(
+                            "ConnectionManager",
+                            f"WebSocket state error broadcasting to tenant {tenant_id}: {e}",
+                            details={"client": connection.client.host if connection.client else "Unknown", "error": str(e)}
+                        )
+                        failed_connections.append(connection)
+                    else:
+                        errorLog(
+                            "ConnectionManager",
+                            f"Unexpected RuntimeError broadcasting to tenant {tenant_id}: {e}",
+                            details={"client": connection.client.host if connection.client else "Unknown", "error": str(e)}
+                        )
+                        failed_connections.append(connection)
+                except Exception as e:
+                    errorLog(
+                        "ConnectionManager",
+                        f"Unexpected error broadcasting to tenant {tenant_id}: {e}",
+                        details={"client": connection.client.host if connection.client else "Unknown", "error_type": type(e).__name__, "error": str(e)}
+                    )
+                    failed_connections.append(connection)
+
+            # Entferne fehlgeschlagene Verbindungen
+            for failed_connection in failed_connections:
+                self.disconnect(failed_connection, tenant_id, reason="Broadcast failed - connection state error")
+
             debugLog(
                 "ConnectionManager",
                 f"Broadcasted text message to tenant: {tenant_id}",
-                details={"tenant_id": tenant_id, "message_length": len(message), "connection_count": len(self.active_connections[tenant_id])}
+                details={
+                    "tenant_id": tenant_id,
+                    "message_length": len(message),
+                    "connection_count": len(self.active_connections.get(tenant_id, [])),
+                    "sent_to_count": sent_to_count,
+                    "failed_count": len(failed_connections)
+                }
             )
 
     async def broadcast_json_to_tenant(self, message: dict, tenant_id: str, exclude_websocket: Optional[WebSocket] = None):
         if tenant_id in self.active_connections:
             sent_to_count = 0
-            for connection in self.active_connections[tenant_id]:
+            failed_connections = []
+
+            for connection in self.active_connections[tenant_id].copy():  # Kopie erstellen für sichere Iteration
                 if exclude_websocket and connection == exclude_websocket:
                     continue
-                debugLog(
-                    "ConnectionManager",
-                    f"Attempting to send JSON to {connection.client.host if connection.client else 'Unknown'} for tenant {tenant_id} via broadcast_json_to_tenant",
-                    details={"message_type": type(message), "message_content_preview": str(message)[:200]}
-                )
-                await connection.send_json(message)
-                sent_to_count += 1
+
+                try:
+                    # Prüfe WebSocket-Status vor dem Senden
+                    if connection.application_state is not None and hasattr(connection.application_state, 'value'):
+                        # 2 = DISCONNECTED state in Starlette/FastAPI
+                        if connection.application_state.value == 2:
+                            warnLog(
+                                "ConnectionManager",
+                                f"Skipping send to disconnected WebSocket for tenant {tenant_id}",
+                                details={"client": connection.client.host if connection.client else "Unknown", "app_state": connection.application_state.value}
+                            )
+                            failed_connections.append(connection)
+                            continue
+
+                    debugLog(
+                        "ConnectionManager",
+                        f"Attempting to send JSON to {connection.client.host if connection.client else 'Unknown'} for tenant {tenant_id} via broadcast_json_to_tenant",
+                        details={"message_type": type(message), "message_content_preview": str(message)[:200]}
+                    )
+                    await connection.send_json(message)
+                    sent_to_count += 1
+
+                except RuntimeError as e:
+                    # Fange spezifische WebSocket-State-Fehler ab
+                    if "Unexpected ASGI message 'websocket.send'" in str(e) or \
+                       "Cannot call 'send' once a close message has been sent" in str(e):
+                        warnLog(
+                            "ConnectionManager",
+                            f"WebSocket state error sending to tenant {tenant_id}: {e}",
+                            details={"client": connection.client.host if connection.client else "Unknown", "error": str(e)}
+                        )
+                        failed_connections.append(connection)
+                    else:
+                        errorLog(
+                            "ConnectionManager",
+                            f"Unexpected RuntimeError sending to tenant {tenant_id}: {e}",
+                            details={"client": connection.client.host if connection.client else "Unknown", "error": str(e)}
+                        )
+                        failed_connections.append(connection)
+                except Exception as e:
+                    errorLog(
+                        "ConnectionManager",
+                        f"Unexpected error sending JSON to tenant {tenant_id}: {e}",
+                        details={"client": connection.client.host if connection.client else "Unknown", "error_type": type(e).__name__, "error": str(e)}
+                    )
+                    failed_connections.append(connection)
+
+            # Entferne fehlgeschlagene Verbindungen aus der aktiven Liste
+            for failed_connection in failed_connections:
+                self.disconnect(failed_connection, tenant_id, reason="Send failed - connection state error")
+
             debugLog(
                 "ConnectionManager",
                 f"Broadcasted JSON message to tenant: {tenant_id}",
-                details={"tenant_id": tenant_id, "message_keys": list(message.keys()), "connection_count": len(self.active_connections[tenant_id]), "sent_to_count": sent_to_count, "excluded_a_connection": bool(exclude_websocket)}
+                details={
+                    "tenant_id": tenant_id,
+                    "message_keys": list(message.keys()),
+                    "connection_count": len(self.active_connections.get(tenant_id, [])),
+                    "sent_to_count": sent_to_count,
+                    "failed_count": len(failed_connections),
+                    "excluded_a_connection": bool(exclude_websocket)
+                }
             )
 
     async def broadcast_to_all(self, message: str):

@@ -1310,7 +1310,7 @@ async def notify_sync_status_change(tenant_id: str, websocket: Optional[WebSocke
             await websocket_manager_instance.send_personal_json_message(status_message, websocket)
         else:
             # Broadcast to all clients of the tenant
-            await websocket_manager_instance.broadcast_to_tenant_json(status_message, tenant_id)
+            await websocket_manager_instance.broadcast_json_to_tenant(status_message, tenant_id)
 
         debugLog(MODULE_NAME, f"Sent sync status update to tenant {tenant_id}", details=status_message)
 
