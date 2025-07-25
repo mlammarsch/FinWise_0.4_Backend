@@ -63,6 +63,24 @@ class EntityType(Enum):
     TENANT = "Tenant"
     TENANT_DATABASE = "TenantDatabase"
 
+class TenantDisconnectMessage(BaseModel):
+    """
+    Message sent from client to signal tenant logout/disconnect.
+    This allows the backend to properly release database resources.
+    """
+    type: Literal["tenant_disconnect"] = "tenant_disconnect"
+    tenant_id: str
+    reason: Optional[str] = "user_logout"  # "user_logout", "tenant_switch", "manual_disconnect"
+
+class TenantDisconnectAckMessage(BaseModel):
+    """
+    Acknowledgment message sent from server after processing tenant disconnect.
+    """
+    type: Literal["tenant_disconnect_ack"] = "tenant_disconnect_ack"
+    tenant_id: str
+    status: Literal["success", "error"] = "success"
+    message: Optional[str] = None
+
 class SyncOperationType(Enum):
     CREATE = "create"
     UPDATE = "update"

@@ -176,10 +176,20 @@ async def delete_tenant_completely_endpoint(
         errorLog(MODULE_NAME, f"Permission denied for complete tenant deletion: {str(e)}",
                 {"tenant_id": tenant_id, "user_id": user_id})
         raise HTTPException(status_code=403, detail=str(e))
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404) without modification
+        raise
     except Exception as e:
-        errorLog(MODULE_NAME, f"Error during complete tenant deletion for {tenant_id}: {str(e)}",
-                {"tenant_id": tenant_id, "user_id": user_id, "error": str(e)})
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during complete tenant deletion: {str(e)}")
+        # Check if the error message indicates a "not found" scenario
+        error_str = str(e).lower()
+        if "not found" in error_str or "404" in error_str:
+            errorLog(MODULE_NAME, f"Tenant with ID: {tenant_id} not found during deletion: {str(e)}",
+                    {"tenant_id": tenant_id, "user_id": user_id})
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        else:
+            errorLog(MODULE_NAME, f"Error during complete tenant deletion for {tenant_id}: {str(e)}",
+                    {"tenant_id": tenant_id, "user_id": user_id, "error": str(e)})
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred during complete tenant deletion: {str(e)}")
 
 
 @router.post("/{tenant_id}/reset-database")

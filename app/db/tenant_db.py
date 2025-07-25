@@ -14,8 +14,8 @@ def get_tenant_db_url(tenant_uuid: str) -> str:
     return f"sqlite:///{os.path.join(TENANT_DB_DIR, db_name)}"
 
 def create_tenant_db_engine(tenant_uuid: str):
-    db_url = get_tenant_db_url(tenant_uuid)
-    return create_engine(db_url, connect_args={"check_same_thread": False})
+    from .database import get_or_create_tenant_engine
+    return get_or_create_tenant_engine(tenant_uuid)
 
 TenantSessionLocal = sessionmaker(autocommit=False, autoflush=False)
 

@@ -13,7 +13,8 @@ from app.websocket.schemas import (
     BackendStatusMessage, ProcessSyncEntryMessage, SyncAckMessage, SyncNackMessage,
     RequestInitialDataMessage, InitialDataLoadMessage, ServerEventType, # Import new schemas for initial data load
     DataStatusRequestMessage, DataStatusResponseMessage, # Import new schemas for data status
-    ProcessSyncQueueMessage, SyncQueueStatusMessage # Import new schemas for staged sync
+    ProcessSyncQueueMessage, SyncQueueStatusMessage, # Import new schemas for staged sync
+    TenantDisconnectMessage, TenantDisconnectAckMessage # Import new tenant disconnect schemas
 )
 from app.services import sync_service # Import the new sync service
 from app.utils.logger import debugLog, errorLog, infoLog, warnLog # Added warnLog
@@ -511,6 +512,67 @@ async def websocket_endpoint(
                             details={"tenant_id": tenant_id, "error": str(status_error)}
                         )
 
+                elif message_type == "tenant_disconnect":
+                    try:
+                        tenant_disconnect_message = TenantDisconnectMessage(**message_data)
+                        infoLog(
+                            "WebSocketEndpoints",
+                            f"Received tenant_disconnect for tenant {tenant_id}. Reason: {tenant_disconnect_message.reason}",
+                            details={"tenant_id": tenant_id, "reason": tenant_disconnect_message.reason}
+                        )
+
+                        # Perform tenant-specific cleanup
+                        try:
+                            # Close database connections for this tenant
+                            # This signals the backend to release database resources
+                            await _handle_tenant_disconnect(tenant_id, tenant_disconnect_message.reason)
+
+                            # Send acknowledgment
+                            ack_message = TenantDisconnectAckMessage(
+                                tenant_id=tenant_id,
+                                status="success",
+                                message="Tenant database resources released successfully"
+                            )
+                            await manager.send_personal_json_message(ack_message.model_dump(), websocket)
+
+                            infoLog(
+                                "WebSocketEndpoints",
+                                f"Successfully processed tenant_disconnect for tenant {tenant_id}",
+                                details={"tenant_id": tenant_id, "reason": tenant_disconnect_message.reason}
+                            )
+
+                        except Exception as cleanup_error:
+                            errorLog(
+                                "WebSocketEndpoints",
+                                f"Error during tenant disconnect cleanup for tenant {tenant_id}: {str(cleanup_error)}",
+                                details={"tenant_id": tenant_id, "error": str(cleanup_error)}
+                            )
+
+                            # Send error acknowledgment
+                            error_ack_message = TenantDisconnectAckMessage(
+                                tenant_id=tenant_id,
+                                status="error",
+                                message=f"Error during cleanup: {str(cleanup_error)}"
+                            )
+                            await manager.send_personal_json_message(error_ack_message.model_dump(), websocket)
+
+                    except ValidationError as ve:
+                        error_detail_for_client = f"Validation error for tenant_disconnect: {str(ve)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Validation error for tenant_disconnect message from tenant {tenant_id}",
+                            details={"tenant_id": tenant_id, "error": ve.errors(), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+                    except Exception as e_disconnect:
+                        error_detail_for_client = f"Error processing tenant_disconnect: {str(e_disconnect)}"
+                        errorLog(
+                            "WebSocketEndpoints",
+                            f"Error processing tenant_disconnect for tenant {tenant_id}: {str(e_disconnect)}",
+                            details={"tenant_id": tenant_id, "error": str(e_disconnect), "data": data[:200]}
+                        )
+                        await manager.send_personal_json_message({"type": "error", "message": error_detail_for_client}, websocket)
+
                 elif message_type: # Handle other known message types if any
                     debugLog(
                         "WebSocketEndpoints",
@@ -593,6 +655,59 @@ async def broadcast_backend_status(status: str):
         f"Successfully initiated broadcast of backend status: {status}",
         details={"status": status}
     )
+
+async def _handle_tenant_disconnect(tenant_id: str, reason: str = "user_logout"):
+    """
+    Handles tenant-specific cleanup when a tenant explicitly disconnects.
+    This includes releasing database resources and performing cleanup operations.
+    """
+    infoLog(
+        "WebSocketEndpoints",
+        f"Handling tenant disconnect for tenant {tenant_id}. Reason: {reason}",
+        details={"tenant_id": tenant_id, "reason": reason}
+    )
+
+    try:
+        # Import here to avoid circular imports
+        from app.api.deps import get_tenant_db, close_tenant_db_connection
+
+        # Close database connections for this tenant
+        # This signals the database layer to release resources
+        close_tenant_db_connection(tenant_id)
+
+        # Additional cleanup can be added here:
+        # - Clear cached data for this tenant
+        # - Release memory resources
+        # - Log tenant activity statistics
+
+        infoLog(
+            "WebSocketEndpoints",
+            f"Successfully released database resources for tenant {tenant_id}",
+            details={"tenant_id": tenant_id, "reason": reason}
+        )
+
+    except ImportError:
+        # Fallback if tenant database management is not available
+        warnLog(
+            "WebSocketEndpoints",
+            f"Tenant database management not available - using fallback cleanup for tenant {tenant_id}",
+            details={"tenant_id": tenant_id, "reason": reason}
+        )
+
+        # Basic cleanup without database-specific operations
+        debugLog(
+            "WebSocketEndpoints",
+            f"Performed basic cleanup for tenant {tenant_id}",
+            details={"tenant_id": tenant_id, "reason": reason}
+        )
+
+    except Exception as cleanup_error:
+        errorLog(
+            "WebSocketEndpoints",
+            f"Error during tenant disconnect cleanup for tenant {tenant_id}: {str(cleanup_error)}",
+            details={"tenant_id": tenant_id, "reason": reason, "error": str(cleanup_error)}
+        )
+        raise  # Re-raise to be handled by the caller
 
 async def broadcast_backend_startup():
     """

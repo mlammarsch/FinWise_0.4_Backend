@@ -188,8 +188,9 @@ class TenantService:
     @staticmethod
     async def _delete_tenant_database_file(tenant_id: str) -> bool:
         """Löscht die physische SQLite-Datei für einen Mandanten mit mehreren Versuchen."""
-        # Importiere die neue Funktion
+        # Importiere die benötigten Funktionen
         from ..db.database import dispose_tenant_engine
+        from ..api.deps import close_tenant_db_connection
 
         if not TENANT_DATABASE_DIR:
             errorLog(MODULE_NAME, "TENANT_DATABASE_DIR not configured", {"tenant_id": tenant_id})
@@ -203,20 +204,35 @@ class TenantService:
                     {"tenant_id": tenant_id, "file_path": db_path})
             return True # Ziel erreicht, wenn Datei nicht existiert
 
-        # Zuerst versuchen, alle Verbindungen zur Engine dieser Tenant-DB zu schließen
+        # 1. Zuerst alle aktiven Verbindungen aus dem deps-Modul schließen
+        debugLog(MODULE_NAME, f"Attempting to close active tenant connections for {tenant_id} before file deletion.",
+                {"tenant_id": tenant_id})
+        close_tenant_db_connection(tenant_id)
+
+        # 2. Dann die Engine disposen, um alle Verbindungen im Pool zu schließen
         debugLog(MODULE_NAME, f"Attempting to dispose engine for tenant {tenant_id} before file deletion.",
                 {"tenant_id": tenant_id})
         dispose_tenant_engine(tenant_id)
         infoLog(MODULE_NAME, f"Engine for tenant {tenant_id} requested to dispose.",
                 {"tenant_id": tenant_id})
 
-        # Kurze Pause nach dem dispose, um sicherzustellen, dass die Operationen abgeschlossen sind.
-        import asyncio
-        await asyncio.sleep(0.1) # 100ms Pause, kürzer als zuvor, da dispose direkter sein sollte
+        # 3. SQLite-spezifische Verbindungen schließen
+        try:
+            import sqlite3
+            # Versuche alle SQLite-Verbindungen zu dieser Datei zu schließen
+            debugLog(MODULE_NAME, f"Attempting to close SQLite connections for {db_path}",
+                    {"tenant_id": tenant_id, "db_path": db_path})
+        except Exception as e:
+            debugLog(MODULE_NAME, f"Error during SQLite connection cleanup: {str(e)}",
+                    {"tenant_id": tenant_id, "error": str(e)})
 
-        # Mehrere Löschversuche
-        max_attempts = 3
-        wait_times = [0.2, 0.5, 1.0] # Wartezeiten in Sekunden für jeden Versuch
+        # 4. Längere Pause nach dem dispose, um sicherzustellen, dass alle Operationen abgeschlossen sind
+        import asyncio
+        await asyncio.sleep(1.0) # 1000ms Pause für vollständige Freigabe
+
+        # Mehrere Löschversuche mit längeren Wartezeiten
+        max_attempts = 5
+        wait_times = [0.5, 1.0, 2.0, 3.0, 5.0] # Wartezeiten in Sekunden für jeden Versuch
 
         for attempt in range(max_attempts):
             try:

@@ -1,8 +1,10 @@
 from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 import contextvars
+from typing import Dict
 
 from app.db.tenant_db import create_tenant_db_engine, TenantSessionLocal
+from app.utils.logger import infoLog, errorLog, debugLog
 
 # Context variable to store the current tenant_id
 current_tenant_context: contextvars.ContextVar[str] = contextvars.ContextVar('current_tenant_id')
@@ -67,3 +69,83 @@ async def get_tenant_db_session(
     finally:
         if 'db' in locals() and db is not None:
             db.close()
+
+# Dictionary to track active tenant database connections
+_tenant_connections: Dict[str, Session] = {}
+
+def get_tenant_db(tenant_id: str) -> Session:
+    """
+    Holt oder erstellt eine mandantenspezifische Datenbankverbindung.
+    Diese Funktion wird für langlebige Verbindungen verwendet (z.B. WebSocket).
+    """
+    if tenant_id in _tenant_connections:
+        return _tenant_connections[tenant_id]
+
+    try:
+        engine = create_tenant_db_engine(tenant_id)
+        TenantSessionLocal.configure(bind=engine)
+        db = TenantSessionLocal()
+        _tenant_connections[tenant_id] = db
+
+        debugLog(
+            "deps",
+            f"Created new tenant database connection for tenant {tenant_id}",
+            {"tenant_id": tenant_id}
+        )
+
+        return db
+    except Exception as e:
+        errorLog(
+            "deps",
+            f"Error creating tenant database connection for {tenant_id}: {str(e)}",
+            {"tenant_id": tenant_id, "error": str(e)}
+        )
+        raise
+
+def close_tenant_db_connection(tenant_id: str) -> bool:
+    """
+    Schließt die Datenbankverbindung für einen spezifischen Mandanten.
+    Wird aufgerufen, wenn ein Mandant sich abmeldet oder gelöscht wird.
+    """
+    if tenant_id not in _tenant_connections:
+        debugLog(
+            "deps",
+            f"No active database connection found for tenant {tenant_id}",
+            {"tenant_id": tenant_id}
+        )
+        return True
+
+    try:
+        db = _tenant_connections[tenant_id]
+        db.close()
+        del _tenant_connections[tenant_id]
+
+        infoLog(
+            "deps",
+            f"Successfully closed database connection for tenant {tenant_id}",
+            {"tenant_id": tenant_id}
+        )
+
+        return True
+    except Exception as e:
+        errorLog(
+            "deps",
+            f"Error closing database connection for tenant {tenant_id}: {str(e)}",
+            {"tenant_id": tenant_id, "error": str(e)}
+        )
+        return False
+
+def close_all_tenant_connections():
+    """
+    Schließt alle aktiven Mandanten-Datenbankverbindungen.
+    Wird beim Herunterfahren des Servers aufgerufen.
+    """
+    tenant_ids = list(_tenant_connections.keys())
+    for tenant_id in tenant_ids:
+        close_tenant_db_connection(tenant_id)
+
+    infoLog(
+        "deps",
+        f"Closed all tenant database connections ({len(tenant_ids)} connections)",
+        {"closed_connections": len(tenant_ids)}
+    )
