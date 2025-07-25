@@ -34,6 +34,7 @@ def create_automation_rule(  # Changed to sync, WebSocket logic moved to service
         actions=automation_rule_in.actions,
         priority=automation_rule_in.priority,
         isActive=automation_rule_in.isActive,
+        conditionLogic=automation_rule_in.conditionLogic or 'all',
         # createdAt has a default
         # updatedAt will be set explicitly if provided, otherwise model default
         updatedAt=automation_rule_in.updated_at if automation_rule_in.updated_at else datetime.utcnow(),
@@ -70,6 +71,7 @@ def update_automation_rule(  # Changed to sync
     db_automation_rule.actions = automation_rule_in.actions
     db_automation_rule.priority = automation_rule_in.priority
     db_automation_rule.isActive = automation_rule_in.isActive
+    db_automation_rule.conditionLogic = automation_rule_in.conditionLogic or 'all'
 
     # Explicitly set updatedAt from payload if provided, otherwise let onupdate handle it
     # This is crucial for LWW, as the incoming payload's timestamp must be respected if it's the "winner"

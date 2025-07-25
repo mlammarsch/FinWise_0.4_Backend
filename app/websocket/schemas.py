@@ -201,6 +201,7 @@ class AutomationRulePayload(BaseModel):
     actions: list[Dict[str, Any]] = Field(default_factory=list) # Array of RuleAction objects
     priority: int
     isActive: bool
+    conditionLogic: Optional[str] = 'all' # 'all' | 'any'
     updated_at: Optional[datetime.datetime] = None
 
     class Config:

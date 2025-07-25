@@ -143,6 +143,7 @@ class AutomationRule(TenantBase):
     actions = Column(JSON, nullable=False, default=list) # Array of RuleAction objects
     priority = Column(Integer, nullable=False, default=0)
     isActive = Column(Boolean, nullable=False, default=True)
+    conditionLogic = Column(String, nullable=False, default='all') # 'all' | 'any'
     # Timestamps
     createdAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
