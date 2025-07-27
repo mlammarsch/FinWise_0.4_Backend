@@ -12,6 +12,7 @@ from app.api.v1.endpoints import user_settings # UserSettings-API importieren
 from app.api.v1.endpoints import logos as logo_endpoints # Logo-API importieren
 from app.api.v1.endpoints import tenant_management # Tenant-Management-API importieren
 from app.utils.logger import infoLog, errorLog, debugLog # Added debugLog
+from app.config import CORS_ORIGINS # Import CORS configuration
 
 MODULE_NAME = "MainApp" # Changed to PascalCase for consistency with other module names in logs
 
@@ -19,6 +20,15 @@ MODULE_NAME = "MainApp" # Changed to PascalCase for consistency with other modul
 async def lifespan(app: FastAPI):
     infoLog(MODULE_NAME, "Application startup sequence initiated.")
     debugLog(MODULE_NAME, "Lifespan context manager entered.")
+
+    # DIAGNOSTIC LOG: Check email-validator availability
+    try:
+        import email_validator
+        infoLog(MODULE_NAME, f"email-validator successfully imported, version: {email_validator.__version__}")
+    except ImportError as e:
+        errorLog(MODULE_NAME, "DIAGNOSIS: email-validator import failed",
+                details={"error": str(e), "suggestion": "Run 'pip install email-validator' or 'pip install pydantic[email]'"})
+
     infoLog(MODULE_NAME, "Attempting to create database and tables...")
     try:
         create_db_and_tables()
@@ -68,15 +78,12 @@ app = FastAPI(
 )
 debugLog(MODULE_NAME, "FastAPI app instance created.", details={"title": app.title, "version": app.version})
 
-origins = [
-    "http://localhost:5173", # Vue.js Frontend Development Server
-    # Fügen Sie hier weitere Origins hinzu, falls erforderlich (z.B. Produktions-URL)
-]
-debugLog(MODULE_NAME, "CORS origins defined.", details={"origins": origins})
+# CORS Origins aus Konfiguration laden
+debugLog(MODULE_NAME, "CORS origins defined.", details={"origins": CORS_ORIGINS})
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,6 +99,11 @@ async def root():
 async def ping():
     debugLog(MODULE_NAME, "Ping endpoint '/ping' accessed.")
     return {"status": "online", "message": "FinWise Backend is running"}
+
+@app.get("/health")
+async def health():
+    """Health check endpoint for Docker"""
+    return {"status": "healthy", "message": "FinWise Backend is healthy"}
 
 app.include_router(users.router)
 debugLog(MODULE_NAME, "Users router included.", details={"prefix": users.router.prefix if hasattr(users.router, 'prefix') else 'N/A', "tags": users.router.tags if hasattr(users.router, 'tags') else 'N/A'})

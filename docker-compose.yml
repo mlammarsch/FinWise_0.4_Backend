@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  finwise-backend:
+    build: .
+    container_name: finwise-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Sicherheit
+      - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-please-change-me}
+      - ALGORITHM=${ALGORITHM:-HS256}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+
+      # Datenbank
+      - CENTRAL_DB_NAME=${CENTRAL_DB_NAME:-users.db}
+
+      # WebSocket-Einstellungen
+      - CLIENT_PING_INTERVAL_SECONDS=${CLIENT_PING_INTERVAL_SECONDS:-30}
+      - SERVER_INACTIVITY_TIMEOUT_SECONDS=${SERVER_INACTIVITY_TIMEOUT_SECONDS:-65}
+
+      # Pfade (werden als Container-Pfade gesetzt)
+      - LOGO_STORAGE_PATH=/app/data/logo_storage
+      - TENANT_DATABASE_DIR=/app/tenant_databases
+      - LOG_PATH=/app/logs
+
+      # Logging
+      - LOGLEVEL=${LOGLEVEL:-WARNING}
+
+      # CORS Origins (kommagetrennte Liste)
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+
+    volumes:
+      # Host-Pfade aus .env Datei verwenden
+      - ${HOST_DB_PATH:-./data/db}:/app/data/db
+      - ${HOST_TENANT_DB_PATH:-./tenant_databases}:/app/tenant_databases
+      - ${HOST_LOGO_PATH:-./data/logo_storage}:/app/data/logo_storage
+      - ${HOST_LOG_PATH:-./logs}:/app/logs
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  default:
+    name: finwise-network

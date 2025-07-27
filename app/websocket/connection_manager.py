@@ -338,6 +338,10 @@ class ConnectionManager:
         )
 
     async def broadcast_backend_status_message(self, status: str):
+        # DIAGNOSTIC LOG: Check active connections before broadcast
+        total_connections = sum(len(connections) for connections in self.active_connections.values())
+        debugLog("ConnectionManager", f"DIAGNOSIS: Broadcasting status '{status}' to {total_connections} connections across {len(self.active_connections)} tenants")
+
         status_message = BackendStatusMessage(status=status)
         await self.broadcast_json_to_all(status_message.model_dump())
         debugLog("ConnectionManager", f"Broadcasted backend status: {status}", details={"status": status})

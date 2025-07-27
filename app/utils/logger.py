@@ -4,11 +4,13 @@ import json
 import enum  # Hinzugefügt für Enum-Behandlung
 from logging.handlers import RotatingFileHandler
 # Stelle sicher, dass config.py zuerst geladen wird, um dotenv zu initialisieren
-from ..config import BACKEND_BASE_DIR  # Importiert BACKEND_BASE_DIR
+from ..config import LOG_PATH  # Importiert LOG_PATH aus der Konfiguration
 
 # --- Konfiguration ---
 LOG_FILE_NAME = "backend.log"
-LOG_FILE_PATH = os.path.join(BACKEND_BASE_DIR, LOG_FILE_NAME)
+# Erstelle das Log-Verzeichnis falls es nicht existiert
+os.makedirs(LOG_PATH, exist_ok=True)
+LOG_FILE_PATH = os.path.join(LOG_PATH, LOG_FILE_NAME)
 LOG_LEVEL_ENV_VAR = "LOGLEVEL"  # Umgebungsvariable für das Log-Level (angepasst an .env)
 DEFAULT_LOG_LEVEL = "INFO"
 
