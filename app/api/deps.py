@@ -28,13 +28,25 @@ def get_current_tenant_id_from_context() -> str:
             detail="Tenant-ID nicht im Kontext gefunden. Sie muss explizit übergeben werden."
         )
 
-async def get_current_tenant_id() -> str:
+async def get_current_tenant_id(request: Request) -> str:
     """
     Dependency, um die tenant_id des aktuellen Benutzers zu erhalten.
     Versucht zuerst die Tenant-ID aus dem Context zu holen,
-    falls das fehlschlägt, wird ein Fallback-Wert verwendet.
+    falls das fehlschlägt, wird der X-Tenant-Id Header gelesen.
     """
-    return get_current_tenant_id_from_context()
+    try:
+        return get_current_tenant_id_from_context()
+    except LookupError:
+        # Fallback: Tenant-ID aus Header lesen
+        if request and 'x-tenant-id' in request.headers:
+            tenant_id = request.headers['x-tenant-id']
+            debugLog('deps', f'Tenant-ID aus Header gelesen: {tenant_id}')
+            return tenant_id
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant-ID nicht gefunden. Weder im Context noch im X-Tenant-Id Header."
+        )
 
 async def get_tenant_db_session(
     tenant_id: str = Depends(get_current_tenant_id)

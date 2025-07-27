@@ -10,6 +10,7 @@ from app.api.v1.endpoints import sync as sync_endpoints # Sync-API-Router import
 from app.api.v1.endpoints import websocket_management # WebSocket-Management-API importieren
 from app.api.v1.endpoints import user_settings # UserSettings-API importieren
 from app.api.v1.endpoints import logos as logo_endpoints # Logo-API importieren
+from app.api.v1.endpoints import tenant_management # Tenant-Management-API importieren
 from app.utils.logger import infoLog, errorLog, debugLog # Added debugLog
 
 MODULE_NAME = "MainApp" # Changed to PascalCase for consistency with other module names in logs
@@ -106,6 +107,8 @@ app.include_router(websocket_management.router, prefix="/api/v1/websocket", tags
 debugLog(MODULE_NAME, "WebSocket Management API router included.", details={"prefix": "/api/v1/websocket", "tags": ["websocket-management"]})
 app.include_router(logo_endpoints.router, prefix="/api/v1/logos", tags=["logos"]) # Logo-API-Router einbinden
 debugLog(MODULE_NAME, "Logo API router included.", details={"prefix": "/api/v1/logos", "tags": ["logos"]})
+app.include_router(tenant_management.router, prefix="/api/v1/tenant", tags=["tenant-management"]) # Tenant-Management-API-Router einbinden
+debugLog(MODULE_NAME, "Tenant Management API router included.", details={"prefix": "/api/v1/tenant", "tags": ["tenant-management"]})
 
 if __name__ == "__main__":
     debugLog(MODULE_NAME, "Application starting with uvicorn (direct execution).", details={"host": "0.0.0.0", "port": 8000})
