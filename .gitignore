@@ -1,7 +1,7 @@
 .env
 env
 venv
-/tenant_databases
+data/
 users.db
 backend.log
 debug.log
