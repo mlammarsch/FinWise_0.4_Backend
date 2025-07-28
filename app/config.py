@@ -39,7 +39,7 @@ LOGO_STORAGE_PATH = os.getenv("LOGO_STORAGE_PATH", os.getenv("HOST_LOGO_PATH", o
 
 # Verzeichnis für die mandantenspezifischen Datenbanken
 # Für lokale Entwicklung: HOST_TENANT_DB_PATH, für Docker: TENANT_DATABASE_DIR
-TENANT_DATABASE_DIR = os.getenv("TENANT_DATABASE_DIR", os.getenv("HOST_TENANT_DB_PATH", os.path.join(BACKEND_BASE_DIR, "tenant_databases")))
+TENANT_DATABASE_DIR = os.getenv("TENANT_DATABASE_DIR", os.getenv("HOST_TENANT_DB_PATH", os.path.join(BACKEND_BASE_DIR, "data", "tenant_databases")))
 
 # Loglevel
 LOGLEVEL = os.getenv("LOGLEVEL", "WARNING")

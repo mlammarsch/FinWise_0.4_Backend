@@ -6,12 +6,13 @@ from sqlalchemy.ext.declarative import declarative_base
 # SQLAlchemy base for tenant-specific tables
 Base = declarative_base()
 
-TENANT_DB_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "tenant_databases"))
+# Importiere die korrekte Pfad-Konfiguration aus config.py
+from ..config import TENANT_DATABASE_DIR
+
+TENANT_DB_DIR = TENANT_DATABASE_DIR
 TENANT_DB_PREFIX = "finwiseTenantDB_"
 
-def get_tenant_db_url(tenant_uuid: str) -> str:
-    db_name = f"{TENANT_DB_PREFIX}{tenant_uuid}.db"
-    return f"sqlite:///{os.path.join(TENANT_DB_DIR, db_name)}"
+# get_tenant_db_url wurde nach database.py verschoben - verwende den Import von dort
 
 def create_tenant_db_engine(tenant_uuid: str):
     from .database import get_or_create_tenant_engine
@@ -37,6 +38,7 @@ def init_tenant_db(tenant_uuid: str):
         raise
 
 def delete_tenant_db_file(tenant_uuid: str) -> bool:
+    from .database import get_tenant_db_url
     db_url = get_tenant_db_url(tenant_uuid)
     db_path = db_url.replace("sqlite:///", "")
     if os.path.exists(db_path):

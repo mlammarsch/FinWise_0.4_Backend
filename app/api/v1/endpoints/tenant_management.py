@@ -5,10 +5,13 @@ from typing import Dict, Any
 import os
 import sqlite3
 import shutil
+import time
+import gc
+import uuid
 from datetime import datetime
 
-from app.db.database import get_db
-from app.db.tenant_db import get_tenant_db_url, TENANT_DB_DIR, init_tenant_db
+from app.db.database import get_db, get_tenant_db_url
+from app.db.tenant_db import TENANT_DB_DIR, init_tenant_db
 from app.api.deps import get_current_tenant_id
 from app.models import schemas
 from app.db import crud
@@ -176,8 +179,9 @@ async def import_tenant_database(
         if not os.path.exists(TENANT_DB_DIR):
             os.makedirs(TENANT_DB_DIR)
 
-        # Temporäre Datei für Validierung erstellen
-        temp_file_path = os.path.join(TENANT_DB_DIR, f"temp_{database_file.filename}")
+        # Temporäre Datei für Validierung erstellen mit eindeutigem Namen
+        unique_id = str(uuid.uuid4())[:8]
+        temp_file_path = os.path.join(TENANT_DB_DIR, f"temp_{unique_id}_{database_file.filename}")
 
         try:
             # Datei temporär speichern
@@ -192,20 +196,30 @@ async def import_tenant_database(
                     detail="Ungültiges Datenbankschema. Die Datei enthält nicht die erwarteten Tabellen."
                 )
 
-            # Neuen Mandanten in Hauptdatenbank erstellen
+            # Neuen Mandanten in Hauptdatenbank erstellen (ohne DB-Datei)
             tenant_create = schemas.TenantCreate(
                 name=new_tenant_name,
                 user_id=current_user_id
             )
 
-            new_tenant = crud.create_tenant(db=main_db, tenant=tenant_create)
+            new_tenant = crud.create_tenant_for_import(db=main_db, tenant=tenant_create)
 
-            # Mandanten-Datenbank initialisieren
-            init_tenant_db(new_tenant.uuid)
-
-            # Importierte Datei an finalen Ort kopieren
+            # Importierte Datei an finalen Ort kopieren (BEVOR init_tenant_db aufgerufen wird)
             final_db_path = get_tenant_db_url(new_tenant.uuid).replace("sqlite:///", "")
+
+            # Sicherstellen, dass das Zielverzeichnis existiert
+            final_db_dir = os.path.dirname(final_db_path)
+            if not os.path.exists(final_db_dir):
+                os.makedirs(final_db_dir)
+
+            # Importierte Datei kopieren
             shutil.copy2(temp_file_path, final_db_path)
+
+            debugLog(
+                MODULE_NAME,
+                f"SQLite-Datei erfolgreich kopiert nach {final_db_path}",
+                details={"source": temp_file_path, "destination": final_db_path}
+            )
 
             infoLog(
                 MODULE_NAME,
@@ -224,9 +238,8 @@ async def import_tenant_database(
             }
 
         finally:
-            # Temporäre Datei löschen
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
+            # Robustes Cleanup der temporären Datei
+            _cleanup_temp_file(temp_file_path)
 
     except HTTPException:
         # HTTPExceptions weiterleiten
@@ -260,31 +273,32 @@ def _validate_database_schema(db_path: str) -> bool:
         "transactions"
     ]
 
+    conn = None
     try:
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
 
-            # Alle Tabellen in der Datenbank abrufen
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            existing_tables = [row[0] for row in cursor.fetchall()]
+        # Alle Tabellen in der Datenbank abrufen
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        existing_tables = [row[0] for row in cursor.fetchall()]
 
-            # Prüfen ob alle erwarteten Tabellen vorhanden sind
-            missing_tables = [table for table in expected_tables if table not in existing_tables]
+        # Prüfen ob alle erwarteten Tabellen vorhanden sind
+        missing_tables = [table for table in expected_tables if table not in existing_tables]
 
-            if missing_tables:
-                warnLog(
-                    MODULE_NAME,
-                    f"Fehlende Tabellen in importierter Datenbank: {missing_tables}",
-                    details={"missing_tables": missing_tables, "existing_tables": existing_tables}
-                )
-                return False
-
-            debugLog(
+        if missing_tables:
+            warnLog(
                 MODULE_NAME,
-                "Datenbankschema-Validierung erfolgreich",
-                details={"existing_tables": existing_tables}
+                f"Fehlende Tabellen in importierter Datenbank: {missing_tables}",
+                details={"missing_tables": missing_tables, "existing_tables": existing_tables}
             )
-            return True
+            return False
+
+        debugLog(
+            MODULE_NAME,
+            "Datenbankschema-Validierung erfolgreich",
+            details={"existing_tables": existing_tables}
+        )
+        return True
 
     except sqlite3.Error as e:
         errorLog(
@@ -293,3 +307,112 @@ def _validate_database_schema(db_path: str) -> bool:
             details={"db_path": db_path, "error": str(e)}
         )
         return False
+    finally:
+        # Explizit SQLite-Verbindung schließen
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+        # Garbage Collection erzwingen für Windows
+        gc.collect()
+
+
+def _cleanup_temp_file(temp_file_path: str, max_retries: int = 5, retry_delay: float = 0.5):
+    """
+    Robustes Cleanup einer temporären Datei mit Retry-Mechanismus für Windows.
+
+    Args:
+        temp_file_path: Pfad zur temporären Datei
+        max_retries: Maximale Anzahl der Wiederholungsversuche
+        retry_delay: Wartezeit zwischen den Versuchen in Sekunden
+    """
+    if not os.path.exists(temp_file_path):
+        return
+
+    for attempt in range(max_retries):
+        try:
+            # Garbage Collection erzwingen vor dem Löschversuch
+            gc.collect()
+
+            # Kurz warten, damit Windows File Handles freigeben kann
+            if attempt > 0:
+                time.sleep(retry_delay)
+
+            # Datei löschen
+            os.remove(temp_file_path)
+
+            debugLog(
+                MODULE_NAME,
+                f"Temporäre Datei erfolgreich gelöscht: {temp_file_path}",
+                details={"temp_file_path": temp_file_path, "attempt": attempt + 1}
+            )
+            return
+
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                warnLog(
+                    MODULE_NAME,
+                    f"Temporäre Datei konnte nicht gelöscht werden (Versuch {attempt + 1}/{max_retries}): {temp_file_path}",
+                    details={
+                        "temp_file_path": temp_file_path,
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries,
+                        "error": str(e)
+                    }
+                )
+                continue
+            else:
+                errorLog(
+                    MODULE_NAME,
+                    f"Temporäre Datei konnte nach {max_retries} Versuchen nicht gelöscht werden: {temp_file_path}",
+                    details={
+                        "temp_file_path": temp_file_path,
+                        "max_retries": max_retries,
+                        "final_error": str(e)
+                    }
+                )
+        except Exception as e:
+            errorLog(
+                MODULE_NAME,
+                f"Unerwarteter Fehler beim Löschen der temporären Datei: {temp_file_path}",
+                details={
+                    "temp_file_path": temp_file_path,
+                    "attempt": attempt + 1,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
+            )
+            break
+
+
+def cleanup_orphaned_temp_files():
+    """
+    Bereinigt verwaiste temporäre Dateien im TENANT_DB_DIR.
+    Sollte beim Server-Start aufgerufen werden.
+    """
+    if not os.path.exists(TENANT_DB_DIR):
+        return
+
+    try:
+        temp_files = [f for f in os.listdir(TENANT_DB_DIR) if f.startswith('temp_')]
+
+        if not temp_files:
+            return
+
+        debugLog(
+            MODULE_NAME,
+            f"Bereinige {len(temp_files)} verwaiste temporäre Dateien",
+            details={"temp_files": temp_files}
+        )
+
+        for temp_file in temp_files:
+            temp_file_path = os.path.join(TENANT_DB_DIR, temp_file)
+            _cleanup_temp_file(temp_file_path)
+
+    except Exception as e:
+        errorLog(
+            MODULE_NAME,
+            f"Fehler beim Bereinigen verwaister temporärer Dateien",
+            details={"error": str(e), "error_type": type(e).__name__}
+        )

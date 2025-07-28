@@ -11,6 +11,7 @@ from app.api.v1.endpoints import websocket_management # WebSocket-Management-API
 from app.api.v1.endpoints import user_settings # UserSettings-API importieren
 from app.api.v1.endpoints import logos as logo_endpoints # Logo-API importieren
 from app.api.v1.endpoints import tenant_management # Tenant-Management-API importieren
+from app.api.v1.endpoints.tenant_management import cleanup_orphaned_temp_files # Cleanup-Funktion importieren
 from app.utils.logger import infoLog, errorLog, debugLog # Added debugLog
 from app.config import CORS_ORIGINS # Import CORS configuration
 
@@ -34,6 +35,17 @@ async def lifespan(app: FastAPI):
         create_db_and_tables()
         infoLog(MODULE_NAME, "Database and tables creation process completed.")
         debugLog(MODULE_NAME, "Successfully called create_db_and_tables.")
+
+        # Cleanup verwaister temporärer Dateien beim Server-Start
+        try:
+            cleanup_orphaned_temp_files()
+            infoLog(MODULE_NAME, "Cleanup of orphaned temporary files completed.")
+        except Exception as cleanup_error:
+            errorLog(
+                MODULE_NAME,
+                "Error during cleanup of orphaned temporary files - continuing with startup",
+                details={"error": str(cleanup_error), "error_type": type(cleanup_error).__name__}
+            )
 
         # Backend-Start-Broadcasting nach erfolgreicher Initialisierung
         try:

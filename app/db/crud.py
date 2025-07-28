@@ -273,3 +273,28 @@ def update_tenant(db: Session, tenant_id: str, tenant_update: schemas.TenantUpda
                 {"tenant_id": tenant_id, "error": str(e)})
         db.rollback()
         raise
+
+def create_tenant_for_import(db: Session, tenant: schemas.TenantCreate) -> models.Tenant:
+    """
+    Erstellt einen neuen Mandanten NUR in der Hauptdatenbank, ohne die Mandanten-DB-Datei zu erstellen.
+    Diese Funktion wird für den Import verwendet, wo die DB-Datei separat kopiert wird.
+    """
+    debugLog(MODULE_NAME, f"Attempting to create tenant '{tenant.name}' for user ID: {tenant.user_id} (import mode)", {"tenant_name": tenant.name, "user_id": tenant.user_id})
+
+    db_tenant = models.Tenant(
+        name=tenant.name,
+        user_id=tenant.user_id
+        # UUID wird automatisch durch SQLAlchemy default gesetzt
+        # createdAt und updatedAt werden automatisch durch SQLAlchemy gesetzt
+    )
+
+    try:
+        db.add(db_tenant)
+        db.commit()
+        db.refresh(db_tenant)
+        infoLog(MODULE_NAME, f"Tenant '{db_tenant.name}' (ID: {db_tenant.uuid}) created in main DB for import by user ID: {db_tenant.user_id}.", {"tenant_id": db_tenant.uuid, "tenant_name": db_tenant.name, "user_id": db_tenant.user_id})
+        return db_tenant
+    except Exception as e:
+        errorLog(MODULE_NAME, f"Error creating tenant '{tenant.name}' for import by user ID: {tenant.user_id}", {"error": str(e)})
+        db.rollback()
+        raise
