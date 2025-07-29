@@ -1,6 +1,13 @@
 .env
 env
 venv
-/tenant_databases
+data/
 users.db
 backend.log
+debug.log
+*.tmp
+cache/
+*.pyc
+*.png
+*.svc
+*.jpg
