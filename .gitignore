@@ -3,11 +3,13 @@ env
 venv
 data/
 users.db
-backend.log
+backend.log*
 debug.log
 *.tmp
 cache/
 *.pyc
+*.py[cod]
+__pycache__/
 *.png
 *.svc
 *.jpg
