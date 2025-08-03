@@ -39,6 +39,12 @@ def create_category(
         categoryGroupId=category_in.categoryGroupId,
         parentCategoryId=category_in.parentCategoryId,
         isSavingsGoal=category_in.isSavingsGoal,
+        goalDate=category_in.goalDate,
+        targetAmount=category_in.targetAmount,
+        priority=category_in.priority,
+        proportion=category_in.proportion,
+        monthlyAmount=category_in.monthlyAmount,
+        note=category_in.note,
         # createdAt has a default
         # updatedAt will be set explicitly if provided, otherwise model default
         updatedAt=category_in.updated_at if category_in.updated_at else datetime.utcnow(),
@@ -82,6 +88,12 @@ def update_category(
     db_category.categoryGroupId = category_in.categoryGroupId
     db_category.parentCategoryId = category_in.parentCategoryId
     db_category.isSavingsGoal = category_in.isSavingsGoal
+    db_category.goalDate = category_in.goalDate
+    db_category.targetAmount = category_in.targetAmount
+    db_category.priority = category_in.priority
+    db_category.proportion = category_in.proportion
+    db_category.monthlyAmount = category_in.monthlyAmount
+    db_category.note = category_in.note
 
     # Explicitly set updatedAt from payload if provided, otherwise let onupdate handle it
     # This is crucial for LWW, as the incoming payload's timestamp must be respected if it's the "winner"

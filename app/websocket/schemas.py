@@ -170,6 +170,12 @@ class CategoryPayload(BaseModel):
     categoryGroupId: Optional[str] = None
     parentCategoryId: Optional[str] = None
     isSavingsGoal: bool = False
+    goalDate: Optional[str] = None
+    targetAmount: Optional[float] = None
+    priority: Optional[int] = None
+    proportion: Optional[float] = None
+    monthlyAmount: Optional[float] = None
+    note: Optional[str] = None
     updated_at: Optional[datetime.datetime] = None
 
     class Config:

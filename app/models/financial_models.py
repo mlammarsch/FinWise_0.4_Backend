@@ -97,6 +97,12 @@ class Category(TenantBase):
     isActive = Column(Boolean, nullable=False, default=True)
     sortOrder = Column(Integer, nullable=False, default=0)
     isSavingsGoal = Column(Boolean, nullable=False, default=False)
+    goalDate = Column(String, nullable=True) # ISO 8601 date string
+    targetAmount = Column(Numeric(10, 2), nullable=True) # Target amount for savings goals
+    priority = Column(Integer, nullable=True)
+    proportion = Column(Numeric(5, 2), nullable=True) # Percentage with 2 decimal places
+    monthlyAmount = Column(Numeric(10, 2), nullable=True)
+    note = Column(Text, nullable=True)
 
     categoryGroupId = Column(String, ForeignKey("category_groups.id"), nullable=True)
     category_group = relationship("CategoryGroup", back_populates="categories")
