@@ -37,9 +37,28 @@ def normalize_datetime_for_comparison(dt: Optional[datetime]) -> Optional[dateti
 
 def get_tenant_db_session(tenant_id: str) -> Session:
     engine = create_tenant_db_engine(tenant_id)
-    TenantBase.metadata.create_all(bind=engine)
-    TenantSessionLocal.configure(bind=engine)
 
+    # Prüfe ob DB bereits Tabellen hat (importierte DB)
+    # Nur bei leeren/neuen DBs Schema erstellen
+    try:
+        # Teste ob eine Kerntabelle bereits existiert
+        with engine.connect() as conn:
+            result = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'")
+            table_exists = result.fetchone() is not None
+
+        if not table_exists:
+            # Nur bei neuen DBs Schema erstellen
+            debugLog(MODULE_NAME, f"Creating schema for new tenant DB {tenant_id}")
+            TenantBase.metadata.create_all(bind=engine)
+        else:
+            debugLog(MODULE_NAME, f"Using existing schema for imported tenant DB {tenant_id}")
+
+    except Exception as e:
+        # Fallback: Schema erstellen wenn Prüfung fehlschlägt
+        warnLog(MODULE_NAME, f"Schema check failed for tenant {tenant_id}, creating schema as fallback", details={"error": str(e)})
+        TenantBase.metadata.create_all(bind=engine)
+
+    TenantSessionLocal.configure(bind=engine)
     db = TenantSessionLocal()
     return db
 
