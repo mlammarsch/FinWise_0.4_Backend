@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import Optional, Dict, List, Tuple  # Added for Optional WebSocket and type hints
 from fastapi import WebSocket  # Added for WebSocket type hint
 from app.websocket.schemas import (
@@ -43,7 +44,7 @@ def get_tenant_db_session(tenant_id: str) -> Session:
     try:
         # Teste ob eine Kerntabelle bereits existiert
         with engine.connect() as conn:
-            result = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'")
+            result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"))
             table_exists = result.fetchone() is not None
 
         if not table_exists:
