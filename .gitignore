@@ -2,7 +2,9 @@
 env
 venv
 data/
+tenant_databases/
 users.db
+*.db
 backend.log*
 debug.log
 *.tmp
