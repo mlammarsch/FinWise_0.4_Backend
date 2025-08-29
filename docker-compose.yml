@@ -1,9 +1,8 @@
-version: '3.8'
-
 services:
   finwise-backend:
-    build: .
+    image: mlammarsch/finwise_backend:latest
     container_name: finwise-backend
+    user: "0:0"
     ports:
       - "8000:8000"
     environment:
@@ -21,8 +20,8 @@ services:
 
       # Pfade (werden als Container-Pfade gesetzt)
       - LOGO_STORAGE_PATH=/app/data/logo_storage
-      - TENANT_DATABASE_DIR=/app/tenant_databases
-      - LOG_PATH=/app/logs
+      - TENANT_DATABASE_DIR=/app/data/tenant_databases
+      - LOG_PATH=/app/data/logs
 
       # Logging
       - LOGLEVEL=${LOGLEVEL:-WARNING}
@@ -31,11 +30,10 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
 
     volumes:
-      # Host-Pfade aus .env Datei verwenden
       - ${HOST_DB_PATH:-./data/db}:/app/data/db
-      - ${HOST_TENANT_DB_PATH:-./tenant_databases}:/app/tenant_databases
+      - ${HOST_TENANT_DB_PATH:-./data/tenant_databases}:/app/data/tenant_databases
       - ${HOST_LOGO_PATH:-./data/logo_storage}:/app/data/logo_storage
-      - ${HOST_LOG_PATH:-./logs}:/app/logs
+      - ${HOST_LOG_PATH:-./logs}:/app/data/logs
 
     restart: unless-stopped
 
